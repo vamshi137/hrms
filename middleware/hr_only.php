@@ -1,9 +1,14 @@
 <?php
-require_once 'login_required.php';
+require_once __DIR__ . '/../core/session.php';
 
-$allowed_roles = ['Super Admin', 'Admin', 'HR'];
-if(!in_array($current_user['role_name'], $allowed_roles)) {
-    header('Location: ../dashboards/employee_dashboard.php?error=Access denied');
+if (!Session::isLoggedIn()) {
+    header('Location: ../../auth/login.php');
+    exit();
+}
+
+$userRole = Session::getUserRole();
+if (!Session::hasPermission('hr')) {
+    header('Location: ../../index.php?error=access_denied');
     exit();
 }
 ?>

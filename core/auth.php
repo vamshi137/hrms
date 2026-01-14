@@ -1,58 +1,63 @@
 <?php
-require_once '../config/db.php';
-require_once '../config/constants.php';
+require_once __DIR__ . '/session.php';
 
 class Auth {
-    private $conn;
+    private $db;
     
-    public function __construct() {
-        $database = new Database();
-        $this->conn = $database->getConnection();
+    public function __construct($db) {
+        $this->db = $db;
     }
     
     public function login($username, $password) {
         try {
-            $query = "SELECT u.*, r.role_name 
+            $query = "SELECT u.*, e.employee_id, e.full_name, e.profile_photo 
                      FROM users u 
-                     JOIN roles r ON u.role_id = r.id 
+                     LEFT JOIN employees e ON u.employee_id = e.id 
                      WHERE (u.username = :username OR u.email = :username) 
-                     AND u.status = 'Active'";
+                     AND u.is_active = 1";
             
-            $stmt = $this->conn->prepare($query);
+            $stmt = $this->db->prepare($query);
             $stmt->bindParam(':username', $username);
             $stmt->execute();
             
-            if($stmt->rowCount() > 0) {
-                $user = $stmt->fetch(PDO::FETCH_ASSOC);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($user && password_verify($password, $user['password_hash'])) {
+                // Update last login
+                $updateQuery = "UPDATE users SET last_login = NOW() WHERE id = :id";
+                $updateStmt = $this->db->prepare($updateQuery);
+                $updateStmt->bindParam(':id', $user['id']);
+                $updateStmt->execute();
                 
-                if(password_verify($password, $user['password_hash'])) {
-                    // Update last login
-                    $this->updateLastLogin($user['id']);
-                    
-                    // Set session variables
-                    Session::set('user_id', $user['id']);
-                    Session::set('role_name', $user['role_name']);
-                    Session::set('org_id', $user['org_id']);
-                    Session::set('branch_id', $user['branch_id']);
-                    Session::set('employee_id', $user['employee_id']);
-                    Session::set('full_name', $user['full_name']);
-                    Session::set('username', $user['username']);
-                    Session::set('role_id', $user['role_id']);
-                    
-                    return ['success' => true, 'user' => $user];
-                }
+                // Set session variables
+                Session::set('user_id', $user['id']);
+                Session::set('employee_id', $user['employee_id']);
+                Session::set('username', $user['username']);
+                Session::set('email', $user['email']);
+                Session::set('role', $user['role']);
+                Session::set('full_name', $user['full_name']);
+                Session::set('profile_photo', $user['profile_photo']);
+                Session::set('logged_in', true);
+                
+                return [
+                    'success' => true,
+                    'role' => $user['role'],
+                    'message' => 'Login successful'
+                ];
             }
-            return ['success' => false, 'message' => 'Invalid credentials'];
+            
+            return [
+                'success' => false,
+                'message' => 'Invalid username or password'
+            ];
+            
         } catch(PDOException $e) {
-            return ['success' => false, 'message' => 'Database error: ' . $e->getMessage()];
+            error_log("Login error: " . $e->getMessage());
+            return [
+                'success' => false,
+                'message' => 'Database error occurred'
+            ];
         }
-    }
-    
-    private function updateLastLogin($user_id) {
-        $query = "UPDATE users SET last_login = NOW() WHERE id = :id";
-        $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(':id', $user_id);
-        $stmt->execute();
     }
     
     public function logout() {
@@ -60,38 +65,49 @@ class Auth {
         return true;
     }
     
-    public function isLoggedIn() {
-        return Session::has('user_id');
-    }
-    
-    public function getCurrentUser() {
-        if($this->isLoggedIn()) {
+    public function changePassword($userId, $currentPassword, $newPassword) {
+        try {
+            // Verify current password
+            $query = "SELECT password_hash FROM users WHERE id = :id";
+            $stmt = $this->db->prepare($query);
+            $stmt->bindParam(':id', $userId);
+            $stmt->execute();
+            
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$user || !password_verify($currentPassword, $user['password_hash'])) {
+                return [
+                    'success' => false,
+                    'message' => 'Current password is incorrect'
+                ];
+            }
+            
+            // Update to new password
+            $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
+            $updateQuery = "UPDATE users SET password_hash = :hash, updated_at = NOW() WHERE id = :id";
+            $updateStmt = $this->db->prepare($updateQuery);
+            $updateStmt->bindParam(':hash', $newHash);
+            $updateStmt->bindParam(':id', $userId);
+            
+            if ($updateStmt->execute()) {
+                return [
+                    'success' => true,
+                    'message' => 'Password changed successfully'
+                ];
+            }
+            
             return [
-                'id' => Session::get('user_id'),
-                'role_name' => Session::get('role_name'),
-                'org_id' => Session::get('org_id'),
-                'branch_id' => Session::get('branch_id'),
-                'employee_id' => Session::get('employee_id'),
-                'full_name' => Session::get('full_name'),
-                'username' => Session::get('username'),
-                'role_id' => Session::get('role_id')
+                'success' => false,
+                'message' => 'Failed to update password'
+            ];
+            
+        } catch(PDOException $e) {
+            error_log("Change password error: " . $e->getMessage());
+            return [
+                'success' => false,
+                'message' => 'Database error occurred'
             ];
         }
-        return null;
-    }
-    
-    public function checkPermission($required_role) {
-        $user_role = Session::get('role_name');
-        $role_hierarchy = [
-            ROLE_SUPER_ADMIN => 5,
-            ROLE_ADMIN => 4,
-            ROLE_HR => 3,
-            ROLE_MANAGER => 2,
-            ROLE_EMPLOYEE => 1
-        ];
-        
-        return isset($role_hierarchy[$user_role]) && 
-               $role_hierarchy[$user_role] >= $role_hierarchy[$required_role];
     }
 }
 ?>

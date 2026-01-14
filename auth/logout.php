@@ -1,10 +1,12 @@
 <?php
-// auth/logout.php
+// Start session
 session_start();
+
+// Destroy all session data
+session_unset();
 session_destroy();
 
 // Redirect to login page
-$login_url = defined('APP_URL') ? APP_URL . 'auth/login.php' : '/auth/login.php';
-header('Location: ' . $login_url);
-exit;
+header('Location: login.php');
+exit();
 ?>

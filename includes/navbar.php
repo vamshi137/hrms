@@ -1,39 +1,31 @@
-<nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm">
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid">
-        <!-- Sidebar Toggle -->
-        <button class="navbar-toggler" type="button" id="sidebarToggle">
-            <i class="fas fa-bars"></i>
-        </button>
-        
-        <!-- Brand -->
-        <a class="navbar-brand ml-2" href="../dashboards/<?php echo strtolower(str_replace(' ', '_', $current_user['role_name'])); ?>_dashboard.php">
-            <img src="../assets/images/logo.png" height="40" class="d-inline-block align-top" alt="HRMS Logo">
-            <span class="ml-2 font-weight-bold">HRMS</span>
+        <a class="navbar-brand" href="../index.php">
+            <i class="fas fa-chart-line"></i> SSMS HRMS
         </a>
         
-        <!-- User Menu -->
-        <div class="navbar-collapse">
-            <ul class="navbar-nav ml-auto">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ms-auto">
                 <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" 
-                       data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-                        <img src="../assets/images/default_user.png" class="rounded-circle mr-2" 
-                             width="32" height="32" alt="User">
-                        <span class="d-none d-md-inline"><?php echo $current_user['full_name']; ?></span>
+                    <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown">
+                        <i class="fas fa-user-circle"></i> <?php echo htmlspecialchars(Session::get('full_name') ?: Session::get('username')); ?>
                     </a>
-                    <div class="dropdown-menu dropdown-menu-right shadow" aria-labelledby="userDropdown">
-                        <div class="dropdown-header">
-                            <h6 class="mb-0"><?php echo $current_user['full_name']; ?></h6>
-                            <small class="text-muted"><?php echo $current_user['role_name']; ?></small>
-                        </div>
-                        <div class="dropdown-divider"></div>
-                        <a class="dropdown-item" href="../modules/employees/employee_view.php?id=<?php echo $current_user['employee_id']; ?>">
-                            <i class="fas fa-user mr-2"></i>My Profile
-                        </a>
-                        <a class="dropdown-item" href="../auth/logout.php">
-                            <i class="fas fa-sign-out-alt mr-2"></i>Logout
-                        </a>
-                    </div>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="../modules/employees/employee_view.php?id=<?php echo Session::get('employee_id'); ?>">
+                            <i class="fas fa-user"></i> My Profile
+                        </a></li>
+                        <li><a class="dropdown-item" href="#">
+                            <i class="fas fa-cog"></i> Settings
+                        </a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="../auth/logout.php">
+                            <i class="fas fa-sign-out-alt"></i> Logout
+                        </a></li>
+                    </ul>
                 </li>
             </ul>
         </div>

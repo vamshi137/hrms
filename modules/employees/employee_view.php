@@ -1,492 +1,735 @@
 <?php
-require_once '../../middleware/hr_only.php';
+require_once '../../config/config.php';
 require_once '../../config/db.php';
+require_once '../../core/session.php';
+require_once '../../middleware/login_required.php';
 
-// Check if employee ID is provided
-if(!isset($_GET['id']) || empty($_GET['id'])) {
-    header('Location: employees_list.php?error=Employee ID required');
+$db = getDB();
+
+if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
+    header('Location: employees_list.php');
     exit();
 }
 
-$employee_id = $_GET['id'];
+$id = $_GET['id'];
 
-// Fetch employee data with all relationships
-$database = new Database();
-$conn = $database->getConnection();
-
-$query = "SELECT e.*, 
-          o.company_name, o.company_code,
-          b.branch_name, b.branch_code,
-          d.department_name, d.department_code,
-          ds.designation_name, ds.grade_level,
-          s.shift_name, s.shift_start, s.shift_end,
-          rm.full_name as reporting_manager_name,
-          rm.employee_code as reporting_manager_code
-          FROM employees e
-          LEFT JOIN organizations o ON e.org_id = o.id
-          LEFT JOIN branches b ON e.branch_id = b.id
-          LEFT JOIN departments d ON e.department_id = d.id
-          LEFT JOIN designations ds ON e.designation_id = ds.id
-          LEFT JOIN shifts s ON e.shift_id = s.id
-          LEFT JOIN employees rm ON e.reporting_manager_id = rm.id
-          WHERE e.id = :id";
-
-$stmt = $conn->prepare($query);
-$stmt->bindParam(':id', $employee_id);
-$stmt->execute();
-
-if($stmt->rowCount() === 0) {
-    header('Location: employees_list.php?error=Employee not found');
-    exit();
+try {
+    // Fetch employee details
+    $query = "SELECT e.*, d.department_name, ds.designation_name, b.branch_name, 
+                     s.shift_name, rm.full_name as reporting_manager_name,
+                     rm.employee_id as reporting_manager_emp_id,
+                     kc.*
+              FROM employees e 
+              LEFT JOIN departments d ON e.department_id = d.id 
+              LEFT JOIN designations ds ON e.designation_id = ds.id 
+              LEFT JOIN branches b ON e.work_location_id = b.id 
+              LEFT JOIN shifts s ON e.shift_id = s.id 
+              LEFT JOIN employees rm ON e.reporting_manager_id = rm.id 
+              LEFT JOIN kyc_compliance kc ON e.id = kc.employee_id 
+              WHERE e.id = :id";
+    
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(':id', $id);
+    $stmt->execute();
+    
+    $employee = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$employee) {
+        header('Location: employees_list.php');
+        exit();
+    }
+    
+    // Fetch bank details
+    $bankStmt = $db->prepare("SELECT * FROM employee_bank_details WHERE employee_id = :id ORDER BY is_primary DESC");
+    $bankStmt->bindParam(':id', $id);
+    $bankStmt->execute();
+    $bankDetails = $bankStmt->fetchAll();
+    
+    // Fetch documents
+    $docStmt = $db->prepare("SELECT * FROM employee_documents WHERE employee_id = :id ORDER BY document_type");
+    $docStmt->bindParam(':id', $id);
+    $docStmt->execute();
+    $documents = $docStmt->fetchAll();
+    
+} catch(PDOException $e) {
+    die("Error: " . $e->getMessage());
 }
-
-$employee = $stmt->fetch(PDO::FETCH_ASSOC);
-
-// Fetch bank details
-$bank_query = "SELECT * FROM employee_bank_details WHERE employee_id = :id";
-$bank_stmt = $conn->prepare($bank_query);
-$bank_stmt->bindParam(':id', $employee_id);
-$bank_stmt->execute();
-$bank_details = $bank_stmt->fetch(PDO::FETCH_ASSOC);
-
-// Fetch documents
-$doc_query = "SELECT * FROM employee_documents WHERE employee_id = :id ORDER BY uploaded_at DESC";
-$doc_stmt = $conn->prepare($doc_query);
-$doc_stmt->bindParam(':id', $employee_id);
-$doc_stmt->execute();
-$documents = $doc_stmt->fetchAll(PDO::FETCH_ASSOC);
-
-$page_title = 'Employee: ' . $employee['full_name'];
-require_once '../../includes/head.php';
-require_once '../../includes/navbar.php';
-require_once '../../includes/sidebar_hr.php';
 ?>
-
-<div class="content-wrapper">
-    <div class="container-fluid">
-        <!-- Page Header -->
-        <div class="page-header">
-            <div class="row align-items-center">
-                <div class="col-md-6">
-                    <h1 class="h3 mb-0">Employee Details</h1>
-                    <nav aria-label="breadcrumb">
-                        <ol class="breadcrumb">
-                            <li class="breadcrumb-item"><a href="../../dashboards/hr_dashboard.php">Home</a></li>
-                            <li class="breadcrumb-item"><a href="employees_list.php">Employees</a></li>
-                            <li class="breadcrumb-item active">View</li>
-                        </ol>
-                    </nav>
-                </div>
-                <div class="col-md-6 text-right">
-                    <div class="btn-group">
-                        <a href="employee_edit.php?id=<?php echo $employee_id; ?>" class="btn btn-warning">
-                            <i class="fas fa-edit mr-2"></i>Edit
-                        </a>
-                        <a href="employees_list.php" class="btn btn-secondary">
-                            <i class="fas fa-arrow-left mr-2"></i>Back to List
-                        </a>
-                        <button class="btn btn-primary" onclick="window.print()">
-                            <i class="fas fa-print mr-2"></i>Print
-                        </button>
-                    </div>
-                </div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <?php include '../../includes/head.php'; ?>
+    <title>View Employee - <?php echo APP_NAME; ?></title>
+</head>
+<body>
+    <?php include '../../includes/navbar.php'; ?>
+    
+    <?php 
+    $userRole = Session::getUserRole();
+    switch($userRole) {
+        case 'super_admin':
+        case 'admin':
+            include '../../includes/sidebar_admin.php';
+            break;
+        case 'hr':
+            include '../../includes/sidebar_hr.php';
+            break;
+        case 'manager':
+            include '../../includes/sidebar_manager.php';
+            break;
+        case 'employee':
+            include '../../includes/sidebar_employee.php';
+            break;
+    }
+    ?>
+    
+    <main class="main-content">
+        <div class="header">
+            <h1><i class="fas fa-user"></i> Employee Details</h1>
+            <div class="actions">
+                <a href="employees_list.php" class="btn btn-secondary">
+                    <i class="fas fa-arrow-left"></i> Back to List
+                </a>
+                <?php if (Session::hasPermission('hr')): ?>
+                <a href="employee_edit.php?id=<?php echo $id; ?>" class="btn btn-warning">
+                    <i class="fas fa-edit"></i> Edit
+                </a>
+                <?php endif; ?>
+                <a href="employee_export.php?id=<?php echo $id; ?>" class="btn btn-success" target="_blank">
+                    <i class="fas fa-print"></i> Print
+                </a>
             </div>
         </div>
-
-        <!-- Flash Messages -->
-        <?php require_once '../../includes/alerts.php'; ?>
-
-        <!-- Employee Profile Card -->
-        <div class="row">
-            <div class="col-md-4">
-                <div class="card mb-4">
-                    <div class="card-body text-center">
-                        <div class="profile-photo-container mb-4">
-                            <img src="../../uploads/profile_photos/<?php echo $employee['profile_photo'] ?: 'default_user.png'; ?>" 
-                                 class="rounded-circle border shadow" width="150" height="150"
-                                 alt="<?php echo htmlspecialchars($employee['full_name']); ?>">
-                        </div>
-                        <h4 class="mb-1"><?php echo htmlspecialchars($employee['full_name']); ?></h4>
-                        <p class="text-muted mb-2"><?php echo $employee['designation_name']; ?></p>
-                        <p class="mb-3">
-                            <span class="badge badge-<?php echo $employee['status'] == 'Active' ? 'success' : 'danger'; ?>">
-                                <?php echo $employee['status']; ?>
-                            </span>
-                        </p>
-                        <div class="d-flex justify-content-center">
-                            <div class="px-3">
-                                <h5 class="mb-0">EMP ID</h5>
-                                <small class="text-muted"><?php echo $employee['employee_code']; ?></small>
-                            </div>
-                            <div class="px-3">
-                                <h5 class="mb-0">Grade</h5>
-                                <small class="text-muted"><?php echo $employee['grade'] ?: 'N/A'; ?></small>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card-footer">
-                        <div class="row">
-                            <div class="col-6 text-center">
-                                <a href="mailto:<?php echo $employee['personal_email']; ?>" class="text-primary">
-                                    <i class="fas fa-envelope fa-lg"></i>
-                                </a>
-                            </div>
-                            <div class="col-6 text-center">
-                                <a href="tel:<?php echo $employee['mobile_number']; ?>" class="text-success">
-                                    <i class="fas fa-phone fa-lg"></i>
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Quick Stats -->
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h6 class="mb-0">Employment Info</h6>
-                    </div>
-                    <div class="card-body">
-                        <div class="row mb-3">
-                            <div class="col-6">
-                                <small class="text-muted">Organization</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['company_name']; ?></p>
-                            </div>
-                            <div class="col-6">
-                                <small class="text-muted">Branch</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['branch_name']; ?></p>
-                            </div>
-                        </div>
-                        <div class="row mb-3">
-                            <div class="col-6">
-                                <small class="text-muted">Department</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['department_name']; ?></p>
-                            </div>
-                            <div class="col-6">
-                                <small class="text-muted">Designation</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['designation_name']; ?></p>
-                            </div>
-                        </div>
-                        <div class="row mb-3">
-                            <div class="col-6">
-                                <small class="text-muted">Date of Joining</small>
-                                <p class="mb-0 font-weight-bold"><?php echo date('d-m-Y', strtotime($employee['date_of_joining'])); ?></p>
-                            </div>
-                            <div class="col-6">
-                                <small class="text-muted">Employment Type</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['employment_type']; ?></p>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-6">
-                                <small class="text-muted">Reporting Manager</small>
-                                <p class="mb-0 font-weight-bold">
-                                    <?php echo $employee['reporting_manager_name'] ?: 'N/A'; ?>
-                                </p>
-                            </div>
-                            <div class="col-6">
-                                <small class="text-muted">Shift</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['shift_name'] ?: 'N/A'; ?></p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-8">
-                <!-- Personal Details -->
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h6 class="mb-0">Personal Information</h6>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Full Name</small>
-                                <p class="mb-0 font-weight-bold"><?php echo htmlspecialchars($employee['full_name']); ?></p>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Gender</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['gender']; ?></p>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Date of Birth</small>
-                                <p class="mb-0 font-weight-bold"><?php echo date('d-m-Y', strtotime($employee['dob'])); ?></p>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Age</small>
-                                <p class="mb-0 font-weight-bold"><?php echo calculateAge($employee['dob']); ?> years</p>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Blood Group</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['blood_group'] ?: 'N/A'; ?></p>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Marital Status</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['marital_status'] ?: 'N/A'; ?></p>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Nationality</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['nationality'] ?: 'N/A'; ?></p>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Mobile Number</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['mobile_number']; ?></p>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Personal Email</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['personal_email']; ?></p>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Emergency Contact</small>
-                                <p class="mb-0 font-weight-bold">
-                                    <?php echo $employee['emergency_contact_name'] ?: 'N/A'; ?>
-                                    <?php if($employee['emergency_contact_number']): ?>
-                                        <br><small><?php echo $employee['emergency_contact_number']; ?></small>
-                                    <?php endif; ?>
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Address Details -->
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h6 class="mb-0">Address Information</h6>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Present Address</small>
-                                <p class="mb-0"><?php echo nl2br(htmlspecialchars($employee['present_address'])); ?></p>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <small class="text-muted">Permanent Address</small>
-                                <p class="mb-0"><?php echo nl2br(htmlspecialchars($employee['permanent_address'] ?: $employee['present_address'])); ?></p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Identity Details -->
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h6 class="mb-0">Identity Documents</h6>
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-4 mb-3">
-                                <small class="text-muted">Aadhaar Number</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['aadhaar_number']; ?></p>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <small class="text-muted">PAN Number</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['pan_number']; ?></p>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <small class="text-muted">Passport Number</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['passport_number'] ?: 'N/A'; ?></p>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-md-4 mb-3">
-                                <small class="text-muted">UAN Number</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['uan_number'] ?: 'N/A'; ?></p>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <small class="text-muted">PF Number</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['pf_number'] ?: 'N/A'; ?></p>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <small class="text-muted">ESIC Number</small>
-                                <p class="mb-0 font-weight-bold"><?php echo $employee['esic_number'] ?: 'N/A'; ?></p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Bank Details -->
-                <div class="card mb-4">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h6 class="mb-0">Bank Account Details</h6>
-                        <?php if($bank_details): ?>
-                            <a href="employee_bank.php?id=<?php echo $employee_id; ?>" class="btn btn-sm btn-warning">
-                                <i class="fas fa-edit mr-1"></i>Edit
-                            </a>
-                        <?php else: ?>
-                            <a href="employee_bank.php?id=<?php echo $employee_id; ?>" class="btn btn-sm btn-primary">
-                                <i class="fas fa-plus mr-1"></i>Add Bank
-                            </a>
-                        <?php endif; ?>
-                    </div>
-                    <div class="card-body">
-                        <?php if($bank_details): ?>
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <small class="text-muted">Bank Name</small>
-                                    <p class="mb-0 font-weight-bold"><?php echo $bank_details['bank_name']; ?></p>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <small class="text-muted">Account Number</small>
-                                    <p class="mb-0 font-weight-bold"><?php echo $bank_details['bank_account_number']; ?></p>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <small class="text-muted">IFSC Code</small>
-                                    <p class="mb-0 font-weight-bold"><?php echo $bank_details['ifsc_code']; ?></p>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <small class="text-muted">Branch Name</small>
-                                    <p class="mb-0 font-weight-bold"><?php echo $bank_details['branch_name']; ?></p>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <small class="text-muted">Payment Mode</small>
-                                    <p class="mb-0 font-weight-bold"><?php echo $bank_details['payment_mode']; ?></p>
-                                </div>
-                            </div>
-                        <?php else: ?>
-                            <div class="text-center py-4">
-                                <i class="fas fa-university fa-3x text-muted mb-3"></i>
-                                <p class="text-muted">No bank details added yet</p>
-                                <a href="employee_bank.php?id=<?php echo $employee_id; ?>" class="btn btn-primary">
-                                    <i class="fas fa-plus mr-2"></i>Add Bank Details
-                                </a>
-                            </div>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Documents Section -->
-        <div class="row">
-            <div class="col-md-12">
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h6 class="mb-0">Employee Documents</h6>
-                        <a href="employee_docs.php?id=<?php echo $employee_id; ?>" class="btn btn-sm btn-primary">
-                            <i class="fas fa-plus mr-1"></i>Add Document
-                        </a>
-                    </div>
-                    <div class="card-body">
-                        <?php if(count($documents) > 0): ?>
-                            <div class="table-responsive">
-                                <table class="table table-hover">
-                                    <thead>
-                                        <tr>
-                                            <th>#</th>
-                                            <th>Document Type</th>
-                                            <th>File Name</th>
-                                            <th>Uploaded At</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach($documents as $index => $doc): ?>
-                                        <tr>
-                                            <td><?php echo $index + 1; ?></td>
-                                            <td><?php echo htmlspecialchars($doc['document_type']); ?></td>
-                                            <td>
-                                                <?php 
-                                                $filename = basename($doc['file_path']);
-                                                echo htmlspecialchars($filename);
-                                                ?>
-                                            </td>
-                                            <td><?php echo date('d-m-Y H:i', strtotime($doc['uploaded_at'])); ?></td>
-                                            <td>
-                                                <a href="../../uploads/employee_docs/<?php echo $doc['file_path']; ?>" 
-                                                   target="_blank" class="btn btn-sm btn-info">
-                                                    <i class="fas fa-eye"></i>
-                                                </a>
-                                                <a href="../../uploads/employee_docs/<?php echo $doc['file_path']; ?>" 
-                                                   download class="btn btn-sm btn-success">
-                                                    <i class="fas fa-download"></i>
-                                                </a>
-                                                <button class="btn btn-sm btn-danger delete-doc" 
-                                                        data-id="<?php echo $doc['id']; ?>">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
-                                            </td>
-                                        </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
-                            </div>
-                        <?php else: ?>
-                            <div class="text-center py-4">
-                                <i class="fas fa-file-alt fa-3x text-muted mb-3"></i>
-                                <p class="text-muted">No documents uploaded yet</p>
-                                <a href="employee_docs.php?id=<?php echo $employee_id; ?>" class="btn btn-primary">
-                                    <i class="fas fa-upload mr-2"></i>Upload Documents
-                                </a>
-                            </div>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Delete Document Modal -->
-<div class="modal fade" id="deleteDocModal" tabindex="-1" role="dialog">
-    <div class="modal-dialog" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Delete Document</h5>
-                <button type="button" class="close" data-dismiss="modal">
-                    <span>&times;</span>
-                </button>
-            </div>
-            <div class="modal-body">
-                <p>Are you sure you want to delete this document?</p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-danger" id="confirmDocDelete">Delete</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<script>
-$(document).ready(function() {
-    // Delete document
-    $('.delete-doc').click(function() {
-        const docId = $(this).data('id');
-        $('#deleteDocModal').modal('show');
         
-        $('#confirmDocDelete').off('click').on('click', function() {
-            $.ajax({
-                url: '../../actions/employee_actions.php',
-                type: 'POST',
-                data: {
-                    action: 'delete_document',
-                    id: docId
-                },
-                success: function(response) {
-                    const result = JSON.parse(response);
-                    if(result.success) {
-                        location.reload();
-                    } else {
-                        alert(result.message);
+        <div class="employee-profile">
+            <div class="row">
+                <div class="col-md-3">
+                    <div class="card profile-card">
+                        <div class="card-body text-center">
+                            <div class="profile-photo">
+                                <?php if ($employee['profile_photo']): ?>
+                                <img src="../../uploads/profile_photos/<?php echo htmlspecialchars($employee['profile_photo']); ?>" 
+                                     alt="Profile Photo" class="img-thumbnail">
+                                <?php else: ?>
+                                <img src="../../assets/images/default_user.png" 
+                                     alt="Profile Photo" class="img-thumbnail">
+                                <?php endif; ?>
+                            </div>
+                            <h4 class="mt-3"><?php echo htmlspecialchars($employee['full_name']); ?></h4>
+                            <p class="text-muted"><?php echo htmlspecialchars($employee['employee_id']); ?></p>
+                            
+                            <div class="employee-status">
+                                <?php 
+                                $statusClass = '';
+                                switch($employee['status']) {
+                                    case 'Active': $statusClass = 'badge-success'; break;
+                                    case 'Inactive': $statusClass = 'badge-secondary'; break;
+                                    case 'Terminated': $statusClass = 'badge-danger'; break;
+                                    case 'Resigned': $statusClass = 'badge-warning'; break;
+                                }
+                                ?>
+                                <span class="badge <?php echo $statusClass; ?> badge-lg">
+                                    <?php echo $employee['status']; ?>
+                                </span>
+                            </div>
+                            
+                            <hr>
+                            
+                            <div class="employee-info">
+                                <p><strong>Department:</strong><br>
+                                   <?php echo htmlspecialchars($employee['department_name']); ?>
+                                </p>
+                                <p><strong>Designation:</strong><br>
+                                   <?php echo htmlspecialchars($employee['designation_name']); ?>
+                                </p>
+                                <p><strong>Location:</strong><br>
+                                   <?php echo htmlspecialchars($employee['branch_name']); ?>
+                                </p>
+                                <p><strong>Date of Joining:</strong><br>
+                                   <?php echo date('d-M-Y', strtotime($employee['date_of_joining'])); ?>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Quick Actions -->
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <h6>Quick Actions</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="list-group">
+                                <a href="employee_docs.php?id=<?php echo $id; ?>" class="list-group-item list-group-item-action">
+                                    <i class="fas fa-file-alt"></i> Documents
+                                </a>
+                                <a href="employee_bank.php?id=<?php echo $id; ?>" class="list-group-item list-group-item-action">
+                                    <i class="fas fa-university"></i> Bank Details
+                                </a>
+                                <a href="#" class="list-group-item list-group-item-action" onclick="generateKYCReport(<?php echo $id; ?>)">
+                                    <i class="fas fa-file-contract"></i> KYC Report
+                                </a>
+                                <?php if (Session::hasPermission('hr')): ?>
+                                <a href="#" class="list-group-item list-group-item-action text-danger" 
+                                   onclick="changeStatus(<?php echo $id; ?>, '<?php echo $employee['status']; ?>')">
+                                    <i class="fas fa-exchange-alt"></i> Change Status
+                                </a>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-9">
+                    <!-- Tab Navigation -->
+                    <ul class="nav nav-tabs" id="employeeTab" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active" id="personal-tab" data-toggle="tab" href="#personal">
+                                <i class="fas fa-user-circle"></i> Personal
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="employment-tab" data-toggle="tab" href="#employment">
+                                <i class="fas fa-briefcase"></i> Employment
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="kyc-tab" data-toggle="tab" href="#kyc">
+                                <i class="fas fa-id-card"></i> KYC
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="bank-tab" data-toggle="tab" href="#bank">
+                                <i class="fas fa-university"></i> Bank
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="documents-tab" data-toggle="tab" href="#documents">
+                                <i class="fas fa-file-alt"></i> Documents
+                            </a>
+                        </li>
+                    </ul>
+                    
+                    <!-- Tab Content -->
+                    <div class="tab-content" id="employeeTabContent">
+                        <!-- Personal Details Tab -->
+                        <div class="tab-pane fade show active" id="personal" role="tabpanel">
+                            <div class="card mt-3">
+                                <div class="card-body">
+                                    <h5 class="card-title">Personal Information</h5>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <table class="table table-sm">
+                                                <tr>
+                                                    <th width="40%">Full Name:</th>
+                                                    <td><?php echo htmlspecialchars($employee['full_name']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Employee ID:</th>
+                                                    <td><?php echo htmlspecialchars($employee['employee_id']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Gender:</th>
+                                                    <td><?php echo htmlspecialchars($employee['gender']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Date of Birth:</th>
+                                                    <td><?php echo date('d-M-Y', strtotime($employee['date_of_birth'])); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Age:</th>
+                                                    <td>
+                                                        <?php 
+                                                        $birthDate = new DateTime($employee['date_of_birth']);
+                                                        $today = new DateTime();
+                                                        $age = $birthDate->diff($today)->y;
+                                                        echo $age . ' years';
+                                                        ?>
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <table class="table table-sm">
+                                                <tr>
+                                                    <th width="40%">Blood Group:</th>
+                                                    <td><?php echo htmlspecialchars($employee['blood_group']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Marital Status:</th>
+                                                    <td><?php echo htmlspecialchars($employee['marital_status']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Nationality:</th>
+                                                    <td><?php echo htmlspecialchars($employee['nationality']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Mobile Number:</th>
+                                                    <td><?php echo htmlspecialchars($employee['mobile_number']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Personal Email:</th>
+                                                    <td><?php echo htmlspecialchars($employee['personal_email']); ?></td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    
+                                    <h6 class="mt-4">Address Details</h6>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="address-box">
+                                                <h6>Present Address:</h6>
+                                                <p><?php echo nl2br(htmlspecialchars($employee['present_address'])); ?></p>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="address-box">
+                                                <h6>Permanent Address:</h6>
+                                                <p><?php echo nl2br(htmlspecialchars($employee['permanent_address'])); ?></p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="row mt-3">
+                                        <div class="col-md-6">
+                                            <table class="table table-sm">
+                                                <tr>
+                                                    <th width="40%">Emergency Contact:</th>
+                                                    <td><?php echo htmlspecialchars($employee['emergency_contact_name']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Emergency Phone:</th>
+                                                    <td><?php echo htmlspecialchars($employee['emergency_contact_number']); ?></td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Employment Details Tab -->
+                        <div class="tab-pane fade" id="employment" role="tabpanel">
+                            <div class="card mt-3">
+                                <div class="card-body">
+                                    <h5 class="card-title">Employment Information</h5>
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <table class="table table-sm">
+                                                <tr>
+                                                    <th width="40%">Date of Joining:</th>
+                                                    <td><?php echo date('d-M-Y', strtotime($employee['date_of_joining'])); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Employment Type:</th>
+                                                    <td><?php echo htmlspecialchars($employee['employment_type']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Department:</th>
+                                                    <td><?php echo htmlspecialchars($employee['department_name']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Designation:</th>
+                                                    <td><?php echo htmlspecialchars($employee['designation_name']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Grade:</th>
+                                                    <td><?php echo htmlspecialchars($employee['grade']); ?></td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <table class="table table-sm">
+                                                <tr>
+                                                    <th width="40%">Reporting Manager:</th>
+                                                    <td>
+                                                        <?php if ($employee['reporting_manager_name']): ?>
+                                                        <?php echo htmlspecialchars($employee['reporting_manager_name']); ?>
+                                                        (<?php echo htmlspecialchars($employee['reporting_manager_emp_id']); ?>)
+                                                        <?php else: ?>
+                                                        <span class="text-muted">Not Assigned</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Work Location:</th>
+                                                    <td><?php echo htmlspecialchars($employee['branch_name']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Shift:</th>
+                                                    <td><?php echo htmlspecialchars($employee['shift_name']); ?></td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Training Period:</th>
+                                                    <td><?php echo $employee['training_period_days']; ?> days</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Probation Period:</th>
+                                                    <td><?php echo $employee['probation_period_days']; ?> days</td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="row mt-3">
+                                        <div class="col-md-6">
+                                            <table class="table table-sm">
+                                                <tr>
+                                                    <th width="40%">Confirmation Date:</th>
+                                                    <td>
+                                                        <?php if ($employee['confirmation_date']): ?>
+                                                        <?php echo date('d-M-Y', strtotime($employee['confirmation_date'])); ?>
+                                                        <?php else: ?>
+                                                        <span class="text-muted">Not Confirmed</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Commitment Period:</th>
+                                                    <td>
+                                                        <?php if ($employee['commitment_from']): ?>
+                                                        <?php echo date('d-M-Y', strtotime($employee['commitment_from'])); ?>
+                                                        to
+                                                        <?php echo date('d-M-Y', strtotime($employee['commitment_to'])); ?>
+                                                        <?php else: ?>
+                                                        <span class="text-muted">Not Specified</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Years of Service:</th>
+                                                    <td>
+                                                        <?php 
+                                                        $doj = new DateTime($employee['date_of_joining']);
+                                                        $today = new DateTime();
+                                                        $service = $doj->diff($today);
+                                                        echo $service->y . ' years, ' . $service->m . ' months, ' . $service->d . ' days';
+                                                        ?>
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- KYC Details Tab -->
+                        <div class="tab-pane fade" id="kyc" role="tabpanel">
+                            <div class="card mt-3">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-center mb-3">
+                                        <h5 class="card-title mb-0">KYC & Identity Details</h5>
+                                        <span class="badge badge-<?php echo $employee['overall_status'] == 'Complete' ? 'success' : 'warning'; ?>">
+                                            KYC Status: <?php echo $employee['overall_status']; ?>
+                                        </span>
+                                    </div>
+                                    
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="kyc-item">
+                                                <h6>Aadhaar Details</h6>
+                                                <table class="table table-sm">
+                                                    <tr>
+                                                        <th width="40%">Aadhaar Number:</th>
+                                                        <td><?php echo htmlspecialchars($employee['aadhaar_number']); ?></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>Verified:</th>
+                                                        <td>
+                                                            <?php if ($employee['aadhaar_verified']): ?>
+                                                            <span class="badge badge-success">Verified</span>
+                                                            <?php else: ?>
+                                                            <span class="badge badge-warning">Pending</span>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                            
+                                            <div class="kyc-item mt-3">
+                                                <h6>PAN Details</h6>
+                                                <table class="table table-sm">
+                                                    <tr>
+                                                        <th width="40%">PAN Number:</th>
+                                                        <td><?php echo htmlspecialchars($employee['pan_number']); ?></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>Verified:</th>
+                                                        <td>
+                                                            <?php if ($employee['pan_verified']): ?>
+                                                            <span class="badge badge-success">Verified</span>
+                                                            <?php else: ?>
+                                                            <span class="badge badge-warning">Pending</span>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                            
+                                            <div class="kyc-item mt-3">
+                                                <h6>Passport Details</h6>
+                                                <table class="table table-sm">
+                                                    <tr>
+                                                        <th width="40%">Passport Number:</th>
+                                                        <td><?php echo htmlspecialchars($employee['passport_number']); ?></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>Validity:</th>
+                                                        <td>
+                                                            <?php if ($employee['passport_number']): ?>
+                                                            <?php echo date('d-M-Y', strtotime($employee['passport_valid_from'])); ?>
+                                                            to
+                                                            <?php echo date('d-M-Y', strtotime($employee['passport_valid_to'])); ?>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>Verified:</th>
+                                                        <td>
+                                                            <?php if ($employee['passport_verified']): ?>
+                                                            <span class="badge badge-success">Verified</span>
+                                                            <?php else: ?>
+                                                            <span class="badge badge-warning">Pending</span>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="col-md-6">
+                                            <div class="kyc-item">
+                                                <h6>Driving License</h6>
+                                                <table class="table table-sm">
+                                                    <tr>
+                                                        <th width="40%">DL Number:</th>
+                                                        <td><?php echo htmlspecialchars($employee['driving_license']); ?></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>Validity:</th>
+                                                        <td>
+                                                            <?php if ($employee['driving_license']): ?>
+                                                            <?php echo date('d-M-Y', strtotime($employee['dl_valid_from'])); ?>
+                                                            to
+                                                            <?php echo date('d-M-Y', strtotime($employee['dl_valid_to'])); ?>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>Verified:</th>
+                                                        <td>
+                                                            <?php if ($employee['dl_verified']): ?>
+                                                            <span class="badge badge-success">Verified</span>
+                                                            <?php else: ?>
+                                                            <span class="badge badge-warning">Pending</span>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                            
+                                            <div class="kyc-item mt-3">
+                                                <h6>Statutory Details</h6>
+                                                <table class="table table-sm">
+                                                    <tr>
+                                                        <th width="40%">UAN Number:</th>
+                                                        <td><?php echo htmlspecialchars($employee['uan_number']); ?></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>PF Number:</th>
+                                                        <td><?php echo htmlspecialchars($employee['pf_number']); ?></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>ESIC Number:</th>
+                                                        <td><?php echo htmlspecialchars($employee['esic_number']); ?></td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                            
+                                            <div class="kyc-item mt-3">
+                                                <h6>Verification History</h6>
+                                                <table class="table table-sm">
+                                                    <tr>
+                                                        <th width="40%">Last Verified:</th>
+                                                        <td>
+                                                            <?php if ($employee['last_verified_date']): ?>
+                                                            <?php echo date('d-M-Y', strtotime($employee['last_verified_date'])); ?>
+                                                            <?php else: ?>
+                                                            <span class="text-muted">Never</span>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>Next Verification:</th>
+                                                        <td>
+                                                            <?php if ($employee['next_verification_date']): ?>
+                                                            <?php echo date('d-M-Y', strtotime($employee['next_verification_date'])); ?>
+                                                            <?php else: ?>
+                                                            <span class="text-muted">Not Scheduled</span>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Bank Details Tab -->
+                        <div class="tab-pane fade" id="bank" role="tabpanel">
+                            <div class="card mt-3">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-center mb-3">
+                                        <h5 class="card-title mb-0">Bank Account Details</h5>
+                                        <a href="employee_bank.php?id=<?php echo $id; ?>" class="btn btn-sm btn-primary">
+                                            <i class="fas fa-plus"></i> Add/Edit
+                                        </a>
+                                    </div>
+                                    
+                                    <?php if (empty($bankDetails)): ?>
+                                    <div class="alert alert-info">
+                                        No bank details added yet.
+                                    </div>
+                                    <?php else: ?>
+                                    <div class="table-responsive">
+                                        <table class="table table-striped">
+                                            <thead>
+                                                <tr>
+                                                    <th>Primary</th>
+                                                    <th>Bank Name</th>
+                                                    <th>Account Number</th>
+                                                    <th>IFSC Code</th>
+                                                    <th>Branch</th>
+                                                    <th>Account Type</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($bankDetails as $bank): ?>
+                                                <tr>
+                                                    <td>
+                                                        <?php if ($bank['is_primary']): ?>
+                                                        <span class="badge badge-success">Primary</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($bank['bank_name']); ?></td>
+                                                    <td><?php echo htmlspecialchars($bank['account_number']); ?></td>
+                                                    <td><?php echo htmlspecialchars($bank['ifsc_code']); ?></td>
+                                                    <td><?php echo htmlspecialchars($bank['branch_name']); ?></td>
+                                                    <td><?php echo htmlspecialchars($bank['account_type']); ?></td>
+                                                </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Documents Tab -->
+                        <div class="tab-pane fade" id="documents" role="tabpanel">
+                            <div class="card mt-3">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between align-items-center mb-3">
+                                        <h5 class="card-title mb-0">Employee Documents</h5>
+                                        <a href="employee_docs.php?id=<?php echo $id; ?>" class="btn btn-sm btn-primary">
+                                            <i class="fas fa-plus"></i> Add Document
+                                        </a>
+                                    </div>
+                                    
+                                    <?php if (empty($documents)): ?>
+                                    <div class="alert alert-info">
+                                        No documents uploaded yet.
+                                    </div>
+                                    <?php else: ?>
+                                    <div class="table-responsive">
+                                        <table class="table table-striped">
+                                            <thead>
+                                                <tr>
+                                                    <th>Document Type</th>
+                                                    <th>Document Number</th>
+                                                    <th>Validity</th>
+                                                    <th>Status</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($documents as $doc): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($doc['document_type']); ?></td>
+                                                    <td><?php echo htmlspecialchars($doc['document_number']); ?></td>
+                                                    <td>
+                                                        <?php if ($doc['valid_from']): ?>
+                                                        <?php echo date('d-M-Y', strtotime($doc['valid_from'])); ?>
+                                                        to
+                                                        <?php echo date('d-M-Y', strtotime($doc['valid_to'])); ?>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                    <td>
+                                                        <?php if ($doc['verified']): ?>
+                                                        <span class="badge badge-success">Verified</span>
+                                                        <?php else: ?>
+                                                        <span class="badge badge-warning">Pending</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                    <td>
+                                                        <?php if ($doc['document_path']): ?>
+                                                        <a href="../../uploads/employee_docs/<?php echo htmlspecialchars($doc['document_path']); ?>" 
+                                                           target="_blank" class="btn btn-sm btn-info">
+                                                            <i class="fas fa-download"></i>
+                                                        </a>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <?php include '../../includes/footer.php'; ?>
+    
+    <script>
+    function generateKYCReport(employeeId) {
+        window.open('employee_export.php?id=' + employeeId + '&type=kyc', '_blank');
+    }
+    
+    function changeStatus(employeeId, currentStatus) {
+        var newStatus = prompt('Enter new status (Active, Inactive, Terminated, Resigned):', currentStatus);
+        if (newStatus && newStatus !== currentStatus) {
+            if (confirm('Are you sure you want to change status to ' + newStatus + '?')) {
+                $.ajax({
+                    url: '../../actions/employee_actions.php',
+                    method: 'POST',
+                    data: {
+                        action: 'change_status',
+                        employee_id: employeeId,
+                        new_status: newStatus
+                    },
+                    success: function(response) {
+                        var result = JSON.parse(response);
+                        if (result.success) {
+                            alert('Status changed successfully');
+                            location.reload();
+                        } else {
+                            alert('Error: ' + result.message);
+                        }
                     }
-                }
-            });
-        });
-    });
-});
-</script>
-
-<?php require_once '../../includes/footer.php'; ?>
+                });
+            }
+        }
+    }
+    </script>
+</body>
+</html>

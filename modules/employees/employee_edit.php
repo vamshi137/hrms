@@ -1,588 +1,402 @@
 <?php
-require_once '../../middleware/hr_only.php';
 require_once '../../config/db.php';
+require_once '../../core/session.php';
+require_once '../../middleware/login_required.php';
 
-// Check if employee ID is provided
-if(!isset($_GET['id']) || empty($_GET['id'])) {
-    header('Location: employees_list.php?error=Employee ID required');
-    exit();
+// Check if the user has HR or Admin role
+if ($_SESSION['role'] != 'hr' && $_SESSION['role'] != 'admin') {
+    header('Location: ../../index.php');
+    exit;
 }
 
-$employee_id = $_GET['id'];
+$id = $_GET['id'] ?? 0;
 
-// Fetch employee data
-$database = new Database();
-$conn = $database->getConnection();
-
-$query = "SELECT e.*, d.department_name, ds.designation_name, o.company_name, b.branch_name
-          FROM employees e
-          LEFT JOIN departments d ON e.department_id = d.id
-          LEFT JOIN designations ds ON e.designation_id = ds.id
-          LEFT JOIN organizations o ON e.org_id = o.id
-          LEFT JOIN branches b ON e.branch_id = b.id
-          WHERE e.id = :id";
-
-$stmt = $conn->prepare($query);
-$stmt->bindParam(':id', $employee_id);
-$stmt->execute();
-
-if($stmt->rowCount() === 0) {
-    header('Location: employees_list.php?error=Employee not found');
-    exit();
-}
-
+$db = getDB();
+$stmt = $db->prepare("
+    SELECT e.*, k.*
+    FROM employees e
+    LEFT JOIN employee_kyc k ON e.id = k.employee_id
+    WHERE e.id = :id
+");
+$stmt->execute([':id' => $id]);
 $employee = $stmt->fetch(PDO::FETCH_ASSOC);
 
-$page_title = 'Edit Employee: ' . $employee['full_name'];
-require_once '../../includes/head.php';
-require_once '../../includes/navbar.php';
-require_once '../../includes/sidebar_hr.php';
+if (!$employee) {
+    header('Location: employees_list.php');
+    exit;
+}
+
+// Fetch departments, designations, branches, and employees (for reporting manager) for dropdowns
+$stmt = $db->query("SELECT id, department_name FROM departments ORDER BY department_name");
+$departments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$stmt = $db->query("SELECT id, designation_name FROM designations ORDER BY designation_name");
+$designations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$stmt = $db->query("SELECT id, branch_name FROM branches ORDER BY branch_name");
+$branches = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$stmt = $db->query("SELECT id, employee_id, full_name FROM employees WHERE id != :id ORDER BY full_name");
+$stmt->execute([':id' => $id]);
+$employees = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
 ?>
-
-<div class="content-wrapper">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <?php include '../../includes/head.php'; ?>
+    <title>Edit Employee - HRMS</title>
+    <style>
+        .section-title {
+            background-color: #f8f9fa;
+            padding: 10px;
+            margin-top: 20px;
+            border-left: 4px solid #007bff;
+        }
+    </style>
+</head>
+<body>
+    <?php include '../../includes/navbar.php'; ?>
     <div class="container-fluid">
-        <!-- Page Header -->
-        <div class="page-header">
-            <div class="row align-items-center">
-                <div class="col-md-6">
-                    <h1 class="h3 mb-0">Edit Employee</h1>
-                    <nav aria-label="breadcrumb">
-                        <ol class="breadcrumb">
-                            <li class="breadcrumb-item"><a href="../../dashboards/hr_dashboard.php">Home</a></li>
-                            <li class="breadcrumb-item"><a href="employees_list.php">Employees</a></li>
-                            <li class="breadcrumb-item active">Edit</li>
-                        </ol>
-                    </nav>
+        <div class="row">
+            <?php include '../../includes/sidebar_hr.php'; ?>
+            <main role="main" class="col-md-9 ml-sm-auto col-lg-10 px-4">
+                <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                    <h1 class="h2">Edit Employee</h1>
                 </div>
-                <div class="col-md-6 text-right">
-                    <a href="employee_view.php?id=<?php echo $employee_id; ?>" class="btn btn-info">
-                        <i class="fas fa-eye mr-2"></i>View
-                    </a>
-                </div>
-            </div>
-        </div>
 
-        <!-- Flash Messages -->
-        <?php require_once '../../includes/alerts.php'; ?>
+                <form action="../../actions/employee_actions.php" method="POST">
+                    <input type="hidden" name="action" value="edit">
+                    <input type="hidden" name="id" value="<?php echo $employee['id']; ?>">
 
-        <!-- Employee Form -->
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">Edit Employee Information</h5>
-                <p class="mb-0 text-muted">Employee Code: <?php echo $employee['employee_code']; ?></p>
-            </div>
-            <div class="card-body">
-                <form action="../../actions/employee_actions.php" method="POST" enctype="multipart/form-data" id="employeeForm">
-                    <input type="hidden" name="action" value="update">
-                    <input type="hidden" name="id" value="<?php echo $employee_id; ?>">
-                    
-                    <!-- Personal Details -->
-                    <div class="form-section mb-5">
-                        <h5 class="section-title">
-                            <i class="fas fa-user mr-2"></i>Personal Details
-                        </h5>
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Full Name *</label>
-                                    <input type="text" name="full_name" class="form-control" 
-                                           value="<?php echo htmlspecialchars($employee['full_name']); ?>" required>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Gender *</label>
-                                    <select name="gender" class="form-control" required>
-                                        <option value="Male" <?php echo $employee['gender'] == 'Male' ? 'selected' : ''; ?>>Male</option>
-                                        <option value="Female" <?php echo $employee['gender'] == 'Female' ? 'selected' : ''; ?>>Female</option>
-                                        <option value="Other" <?php echo $employee['gender'] == 'Other' ? 'selected' : ''; ?>>Other</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Date of Birth *</label>
-                                    <input type="date" name="dob" class="form-control" 
-                                           value="<?php echo $employee['dob']; ?>" required>
-                                </div>
+                    <div class="form-group row">
+                        <label for="employee_id" class="col-sm-2 col-form-label">Employee ID</label>
+                        <div class="col-sm-4">
+                            <input type="text" class="form-control" id="employee_id" value="<?php echo $employee['employee_id']; ?>" readonly>
+                        </div>
+                    </div>
+
+                    <h4 class="section-title">Personal Details</h4>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="full_name">Full Name (as per Aadhaar/PAN/10th)</label>
+                                <input type="text" class="form-control" id="full_name" name="full_name" value="<?php echo $employee['full_name']; ?>" required>
                             </div>
                         </div>
-                        
-                        <div class="row">
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Blood Group</label>
-                                    <select name="blood_group" class="form-control">
-                                        <option value="">Select Blood Group</option>
-                                        <?php
-                                        $blood_groups = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
-                                        foreach($blood_groups as $bg) {
-                                            $selected = $employee['blood_group'] == $bg ? 'selected' : '';
-                                            echo "<option value='$bg' $selected>$bg</option>";
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Marital Status</label>
-                                    <select name="marital_status" class="form-control">
-                                        <option value="">Select Status</option>
-                                        <option value="Single" <?php echo $employee['marital_status'] == 'Single' ? 'selected' : ''; ?>>Single</option>
-                                        <option value="Married" <?php echo $employee['marital_status'] == 'Married' ? 'selected' : ''; ?>>Married</option>
-                                        <option value="Divorced" <?php echo $employee['marital_status'] == 'Divorced' ? 'selected' : ''; ?>>Divorced</option>
-                                        <option value="Widowed" <?php echo $employee['marital_status'] == 'Widowed' ? 'selected' : ''; ?>>Widowed</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Nationality</label>
-                                    <input type="text" name="nationality" class="form-control" 
-                                           value="<?php echo htmlspecialchars($employee['nationality']); ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Profile Photo</label>
-                                    <div class="d-flex align-items-center">
-                                        <div class="mr-3">
-                                            <img src="../../uploads/profile_photos/<?php echo $employee['profile_photo'] ?: 'default_user.png'; ?>" 
-                                                 class="rounded-circle" width="60" height="60" 
-                                                 alt="<?php echo htmlspecialchars($employee['full_name']); ?>">
-                                        </div>
-                                        <div class="custom-file">
-                                            <input type="file" name="profile_photo" class="custom-file-input" 
-                                                   accept="image/*">
-                                            <label class="custom-file-label">Change photo</label>
-                                        </div>
-                                    </div>
-                                    <?php if($employee['profile_photo']): ?>
-                                        <div class="form-check mt-2">
-                                            <input type="checkbox" class="form-check-input" name="remove_photo" value="1">
-                                            <label class="form-check-label">Remove current photo</label>
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="gender">Gender</label>
+                                <select class="form-control" id="gender" name="gender" required>
+                                    <option value="">Select</option>
+                                    <option value="Male" <?php echo $employee['gender'] == 'Male' ? 'selected' : ''; ?>>Male</option>
+                                    <option value="Female" <?php echo $employee['gender'] == 'Female' ? 'selected' : ''; ?>>Female</option>
+                                    <option value="Other" <?php echo $employee['gender'] == 'Other' ? 'selected' : ''; ?>>Other</option>
+                                </select>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Contact Details -->
-                    <div class="form-section mb-5">
-                        <h5 class="section-title">
-                            <i class="fas fa-address-book mr-2"></i>Contact Details
-                        </h5>
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label>Present Address *</label>
-                                    <textarea name="present_address" class="form-control" rows="3" required><?php echo htmlspecialchars($employee['present_address']); ?></textarea>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label>Permanent Address</label>
-                                    <textarea name="permanent_address" class="form-control" rows="3"><?php echo htmlspecialchars($employee['permanent_address']); ?></textarea>
-                                </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="date_of_birth">Date of Birth</label>
+                                <input type="date" class="form-control" id="date_of_birth" name="date_of_birth" value="<?php echo $employee['date_of_birth']; ?>" required>
                             </div>
                         </div>
-                        
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Mobile Number *</label>
-                                    <input type="text" name="mobile_number" class="form-control" 
-                                           value="<?php echo $employee['mobile_number']; ?>" required 
-                                           pattern="[0-9]{10}">
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Personal Email *</label>
-                                    <input type="email" name="personal_email" class="form-control" 
-                                           value="<?php echo htmlspecialchars($employee['personal_email']); ?>" required>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Emergency Contact Name</label>
-                                    <input type="text" name="emergency_contact_name" class="form-control" 
-                                           value="<?php echo htmlspecialchars($employee['emergency_contact_name']); ?>">
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Emergency Contact Number</label>
-                                    <input type="text" name="emergency_contact_number" class="form-control" 
-                                           value="<?php echo $employee['emergency_contact_number']; ?>">
-                                </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="blood_group">Blood Group</label>
+                                <input type="text" class="form-control" id="blood_group" name="blood_group" value="<?php echo $employee['blood_group']; ?>">
                             </div>
                         </div>
                     </div>
 
-                    <!-- Identity Details -->
-                    <div class="form-section mb-5">
-                        <h5 class="section-title">
-                            <i class="fas fa-id-card mr-2"></i>Identity Details
-                        </h5>
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Aadhaar Number *</label>
-                                    <input type="text" name="aadhaar_number" class="form-control" 
-                                           value="<?php echo $employee['aadhaar_number']; ?>" 
-                                           pattern="[0-9]{12}" required>
-                                    <small class="form-text text-muted">12-digit Aadhaar number</small>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>PAN Number *</label>
-                                    <input type="text" name="pan_number" class="form-control uppercase"
-                                           value="<?php echo $employee['pan_number']; ?>"
-                                           pattern="[A-Z]{5}[0-9]{4}[A-Z]{1}" required>
-                                    <small class="form-text text-muted">Format: ABCDE1234F</small>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Passport Number</label>
-                                    <input type="text" name="passport_number" class="form-control" 
-                                           value="<?php echo $employee['passport_number']; ?>">
-                                </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="marital_status">Marital Status</label>
+                                <select class="form-control" id="marital_status" name="marital_status" required>
+                                    <option value="">Select</option>
+                                    <option value="Single" <?php echo $employee['marital_status'] == 'Single' ? 'selected' : ''; ?>>Single</option>
+                                    <option value="Married" <?php echo $employee['marital_status'] == 'Married' ? 'selected' : ''; ?>>Married</option>
+                                </select>
                             </div>
                         </div>
-                        
-                        <div class="row">
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Passport Valid From</label>
-                                    <input type="date" name="passport_valid_from" class="form-control" 
-                                           value="<?php echo $employee['passport_valid_from']; ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Passport Valid To</label>
-                                    <input type="date" name="passport_valid_to" class="form-control" 
-                                           value="<?php echo $employee['passport_valid_to']; ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Driving License</label>
-                                    <input type="text" name="driving_license" class="form-control" 
-                                           value="<?php echo $employee['driving_license']; ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>DL Valid To</label>
-                                    <input type="date" name="dl_valid_to" class="form-control" 
-                                           value="<?php echo $employee['dl_valid_to']; ?>">
-                                </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="nationality">Nationality</label>
+                                <input type="text" class="form-control" id="nationality" name="nationality" value="<?php echo $employee['nationality']; ?>" required>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Employment Details -->
-                    <div class="form-section mb-5">
-                        <h5 class="section-title">
-                            <i class="fas fa-briefcase mr-2"></i>Employment Details
-                        </h5>
-                        <div class="row">
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Organization *</label>
-                                    <select name="org_id" class="form-control" required>
-                                        <option value="">Select Organization</option>
-                                        <?php
-                                        $org_query = "SELECT * FROM organizations WHERE status = 'Active'";
-                                        $org_stmt = $conn->prepare($org_query);
-                                        $org_stmt->execute();
-                                        while($org = $org_stmt->fetch(PDO::FETCH_ASSOC)) {
-                                            $selected = $employee['org_id'] == $org['id'] ? 'selected' : '';
-                                            echo "<option value='{$org['id']}' $selected>{$org['company_name']}</option>";
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Branch *</label>
-                                    <select name="branch_id" class="form-control" required>
-                                        <option value="">Select Branch</option>
-                                        <?php
-                                        $branch_query = "SELECT * FROM branches WHERE status = 'Active'";
-                                        $branch_stmt = $conn->prepare($branch_query);
-                                        $branch_stmt->execute();
-                                        while($branch = $branch_stmt->fetch(PDO::FETCH_ASSOC)) {
-                                            $selected = $employee['branch_id'] == $branch['id'] ? 'selected' : '';
-                                            echo "<option value='{$branch['id']}' $selected>{$branch['branch_name']}</option>";
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Department *</label>
-                                    <select name="department_id" class="form-control" required>
-                                        <option value="">Select Department</option>
-                                        <?php
-                                        $dept_query = "SELECT * FROM departments WHERE status = 'Active'";
-                                        $dept_stmt = $conn->prepare($dept_query);
-                                        $dept_stmt->execute();
-                                        while($dept = $dept_stmt->fetch(PDO::FETCH_ASSOC)) {
-                                            $selected = $employee['department_id'] == $dept['id'] ? 'selected' : '';
-                                            echo "<option value='{$dept['id']}' $selected>{$dept['department_name']}</option>";
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Designation *</label>
-                                    <select name="designation_id" class="form-control" required>
-                                        <option value="">Select Designation</option>
-                                        <?php
-                                        $desg_query = "SELECT * FROM designations WHERE status = 'Active'";
-                                        $desg_stmt = $conn->prepare($desg_query);
-                                        $desg_stmt->execute();
-                                        while($desg = $desg_stmt->fetch(PDO::FETCH_ASSOC)) {
-                                            $selected = $employee['designation_id'] == $desg['id'] ? 'selected' : '';
-                                            echo "<option value='{$desg['id']}' $selected>{$desg['designation_name']}</option>";
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
+                    <h4 class="section-title">Address & Contact Details</h4>
+                    <div class="form-group">
+                        <label for="present_address">Present Address</label>
+                        <textarea class="form-control" id="present_address" name="present_address" rows="3" required><?php echo $employee['present_address']; ?></textarea>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="mobile_number">Mobile Number</label>
+                                <input type="text" class="form-control" id="mobile_number" name="mobile_number" value="<?php echo $employee['mobile_number']; ?>" required>
                             </div>
                         </div>
-                        
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Date of Joining *</label>
-                                    <input type="date" name="date_of_joining" class="form-control" 
-                                           value="<?php echo $employee['date_of_joining']; ?>" required>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Employment Type *</label>
-                                    <select name="employment_type" class="form-control" required>
-                                        <?php
-                                        $emp_types = ['Permanent', 'Contract', 'Consultant', 'Fixed', 'Project', 'Govt'];
-                                        foreach($emp_types as $type) {
-                                            $selected = $employee['employment_type'] == $type ? 'selected' : '';
-                                            echo "<option value='$type' $selected>$type</option>";
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Shift</label>
-                                    <select name="shift_id" class="form-control">
-                                        <option value="">Select Shift</option>
-                                        <?php
-                                        $shift_query = "SELECT * FROM shifts WHERE status = 'Active'";
-                                        $shift_stmt = $conn->prepare($shift_query);
-                                        $shift_stmt->execute();
-                                        while($shift = $shift_stmt->fetch(PDO::FETCH_ASSOC)) {
-                                            $selected = $employee['shift_id'] == $shift['id'] ? 'selected' : '';
-                                            echo "<option value='{$shift['id']}' $selected>{$shift['shift_name']}</option>";
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Grade</label>
-                                    <input type="text" name="grade" class="form-control" 
-                                           value="<?php echo $employee['grade']; ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Reporting Manager</label>
-                                    <select name="reporting_manager_id" class="form-control select2">
-                                        <option value="">Select Manager</option>
-                                        <?php
-                                        $manager_query = "SELECT id, employee_code, full_name FROM employees 
-                                                         WHERE status = 'Active' AND id != :id ORDER BY full_name";
-                                        $manager_stmt = $conn->prepare($manager_query);
-                                        $manager_stmt->bindParam(':id', $employee_id);
-                                        $manager_stmt->execute();
-                                        while($manager = $manager_stmt->fetch(PDO::FETCH_ASSOC)) {
-                                            $selected = $employee['reporting_manager_id'] == $manager['id'] ? 'selected' : '';
-                                            echo "<option value='{$manager['id']}' $selected>{$manager['full_name']} ({$manager['employee_code']})</option>";
-                                        }
-                                        ?>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>Employee Code *</label>
-                                    <input type="text" name="employee_code" class="form-control" 
-                                           value="<?php echo $employee['employee_code']; ?>" required readonly>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Training Period (Months)</label>
-                                    <input type="number" name="training_period" class="form-control" min="0"
-                                           value="<?php echo $employee['training_period']; ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Probation Period (Months)</label>
-                                    <input type="number" name="probation_period" class="form-control" min="0"
-                                           value="<?php echo $employee['probation_period']; ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Confirmation Date</label>
-                                    <input type="date" name="confirmation_date" class="form-control"
-                                           value="<?php echo $employee['confirmation_date']; ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label>Status *</label>
-                                    <select name="status" class="form-control" required>
-                                        <option value="Active" <?php echo $employee['status'] == 'Active' ? 'selected' : ''; ?>>Active</option>
-                                        <option value="Inactive" <?php echo $employee['status'] == 'Inactive' ? 'selected' : ''; ?>>Inactive</option>
-                                    </select>
-                                </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="personal_email">Personal Email ID</label>
+                                <input type="email" class="form-control" id="personal_email" name="personal_email" value="<?php echo $employee['personal_email']; ?>" required>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Statutory Details -->
-                    <div class="form-section mb-5">
-                        <h5 class="section-title">
-                            <i class="fas fa-file-invoice-dollar mr-2"></i>Statutory Details
-                        </h5>
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>UAN Number</label>
-                                    <input type="text" name="uan_number" class="form-control"
-                                           value="<?php echo $employee['uan_number']; ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>PF Number</label>
-                                    <input type="text" name="pf_number" class="form-control"
-                                           value="<?php echo $employee['pf_number']; ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label>ESIC Number</label>
-                                    <input type="text" name="esic_number" class="form-control"
-                                           value="<?php echo $employee['esic_number']; ?>">
-                                </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="emergency_contact_name">Emergency Contact Name</label>
+                                <input type="text" class="form-control" id="emergency_contact_name" name="emergency_contact_name" value="<?php echo $employee['emergency_contact_name']; ?>" required>
                             </div>
                         </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label>Commitment From Date</label>
-                                    <input type="date" name="commitment_from" class="form-control"
-                                           value="<?php echo $employee['commitment_from']; ?>">
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label>Commitment To Date</label>
-                                    <input type="date" name="commitment_to" class="form-control"
-                                           value="<?php echo $employee['commitment_to']; ?>">
-                                </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="emergency_contact_number">Emergency Contact Number</label>
+                                <input type="text" class="form-control" id="emergency_contact_number" name="emergency_contact_number" value="<?php echo $employee['emergency_contact_number']; ?>" required>
                             </div>
                         </div>
                     </div>
 
-                    <div class="form-group text-center">
-                        <button type="submit" class="btn btn-primary btn-lg mr-3">
-                            <i class="fas fa-save mr-2"></i>Update Employee
-                        </button>
-                        <a href="employee_view.php?id=<?php echo $employee_id; ?>" class="btn btn-info btn-lg mr-3">
-                            <i class="fas fa-eye mr-2"></i>View
-                        </a>
-                        <a href="employees_list.php" class="btn btn-outline-secondary btn-lg">
-                            <i class="fas fa-times mr-2"></i>Cancel
-                        </a>
+                    <div class="form-group">
+                        <label for="permanent_address">Permanent Address</label>
+                        <textarea class="form-control" id="permanent_address" name="permanent_address" rows="3" required><?php echo $employee['permanent_address']; ?></textarea>
                     </div>
+
+                    <h4 class="section-title">Identity & KYC Details</h4>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="aadhaar_number">Aadhaar Number</label>
+                                <input type="text" class="form-control" id="aadhaar_number" name="aadhaar_number" value="<?php echo $employee['aadhaar_number']; ?>" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="pan_number">PAN Number</label>
+                                <input type="text" class="form-control" id="pan_number" name="pan_number" value="<?php echo $employee['pan_number']; ?>" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="passport_number">Passport Number (if applicable)</label>
+                                <input type="text" class="form-control" id="passport_number" name="passport_number" value="<?php echo $employee['passport_number']; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="passport_valid_from">Passport Valid From</label>
+                                <input type="date" class="form-control" id="passport_valid_from" name="passport_valid_from" value="<?php echo $employee['passport_valid_from']; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="passport_valid_to">Passport Valid To</label>
+                                <input type="date" class="form-control" id="passport_valid_to" name="passport_valid_to" value="<?php echo $employee['passport_valid_to']; ?>">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="driving_license_number">Driving License Number</label>
+                                <input type="text" class="form-control" id="driving_license_number" name="driving_license_number" value="<?php echo $employee['driving_license_number']; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="dl_valid_from">DL Valid From</label>
+                                <input type="date" class="form-control" id="dl_valid_from" name="dl_valid_from" value="<?php echo $employee['dl_valid_from']; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="dl_valid_to">DL Valid To</label>
+                                <input type="date" class="form-control" id="dl_valid_to" name="dl_valid_to" value="<?php echo $employee['dl_valid_to']; ?>">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="uan_number">UAN Number</label>
+                                <input type="text" class="form-control" id="uan_number" name="uan_number" value="<?php echo $employee['uan_number']; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="pf_number">PF Number</label>
+                                <input type="text" class="form-control" id="pf_number" name="pf_number" value="<?php echo $employee['pf_number']; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="esic_number">ESIC Number</label>
+                                <input type="text" class="form-control" id="esic_number" name="esic_number" value="<?php echo $employee['esic_number']; ?>">
+                            </div>
+                        </div>
+                    </div>
+
+                    <h4 class="section-title">Employment Details</h4>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="date_of_joining">Date of Joining</label>
+                                <input type="date" class="form-control" id="date_of_joining" name="date_of_joining" value="<?php echo $employee['date_of_joining']; ?>" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="employment_type">Employment Type</label>
+                                <select class="form-control" id="employment_type" name="employment_type" required>
+                                    <option value="">Select</option>
+                                    <option value="Permanent" <?php echo $employee['employment_type'] == 'Permanent' ? 'selected' : ''; ?>>Permanent</option>
+                                    <option value="Contract" <?php echo $employee['employment_type'] == 'Contract' ? 'selected' : ''; ?>>Contract</option>
+                                    <option value="Consultant" <?php echo $employee['employment_type'] == 'Consultant' ? 'selected' : ''; ?>>Consultant</option>
+                                    <option value="Project" <?php echo $employee['employment_type'] == 'Project' ? 'selected' : ''; ?>>Project</option>
+                                    <option value="Govt" <?php echo $employee['employment_type'] == 'Govt' ? 'selected' : ''; ?>>Govt</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="department_id">Department</label>
+                                <select class="form-control" id="department_id" name="department_id" required>
+                                    <option value="">Select Department</option>
+                                    <?php foreach ($departments as $dept): ?>
+                                        <option value="<?php echo $dept['id']; ?>" <?php echo $dept['id'] == $employee['department_id'] ? 'selected' : ''; ?>>
+                                            <?php echo $dept['department_name']; ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="designation_id">Designation</label>
+                                <select class="form-control" id="designation_id" name="designation_id" required>
+                                    <option value="">Select Designation</option>
+                                    <?php foreach ($designations as $desig): ?>
+                                        <option value="<?php echo $desig['id']; ?>" <?php echo $desig['id'] == $employee['designation_id'] ? 'selected' : ''; ?>>
+                                            <?php echo $desig['designation_name']; ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="grade">Grade</label>
+                                <input type="text" class="form-control" id="grade" name="grade" value="<?php echo $employee['grade']; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="reporting_manager_id">Reporting Manager</label>
+                                <select class="form-control" id="reporting_manager_id" name="reporting_manager_id">
+                                    <option value="">Select Reporting Manager</option>
+                                    <?php foreach ($employees as $emp): ?>
+                                        <option value="<?php echo $emp['id']; ?>" <?php echo $emp['id'] == $employee['reporting_manager_id'] ? 'selected' : ''; ?>>
+                                            <?php echo $emp['full_name'] . ' (' . $emp['employee_id'] . ')'; ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="work_location">Work Location / Branch</label>
+                                <select class="form-control" id="work_location" name="work_location" required>
+                                    <option value="">Select Branch</option>
+                                    <?php foreach ($branches as $branch): ?>
+                                        <option value="<?php echo $branch['id']; ?>" <?php echo $branch['id'] == $employee['work_location'] ? 'selected' : ''; ?>>
+                                            <?php echo $branch['branch_name']; ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="shift_type">Shift Type</label>
+                                <input type="text" class="form-control" id="shift_type" name="shift_type" value="<?php echo $employee['shift_type']; ?>">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="training_period">Training Period (in days)</label>
+                                <input type="number" class="form-control" id="training_period" name="training_period" value="<?php echo $employee['training_period']; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="probation_period">Probation Period (in days)</label>
+                                <input type="number" class="form-control" id="probation_period" name="probation_period" value="<?php echo $employee['probation_period']; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label for="confirmation_date">Confirmation Date</label>
+                                <input type="date" class="form-control" id="confirmation_date" name="confirmation_date" value="<?php echo $employee['confirmation_date']; ?>">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="commitment_from">Commitment From</label>
+                                <input type="date" class="form-control" id="commitment_from" name="commitment_from" value="<?php echo $employee['commitment_from']; ?>">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label for="commitment_to">Commitment To</label>
+                                <input type="date" class="form-control" id="commitment_to" name="commitment_to" value="<?php echo $employee['commitment_to']; ?>">
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Update Employee</button>
+                    <a href="employees_list.php" class="btn btn-secondary">Cancel</a>
                 </form>
-            </div>
+
+            </main>
         </div>
     </div>
-</div>
 
-<script>
-$(document).ready(function() {
-    // File input label
-    $('.custom-file-input').on('change', function() {
-        const fileName = $(this).val().split('\\').pop();
-        $(this).next('.custom-file-label').addClass("selected").html(fileName);
-    });
-    
-    // Auto-uppercase for PAN
-    $('.uppercase').on('input', function() {
-        this.value = this.value.toUpperCase();
-    });
-    
-    // Form validation
-    $('#employeeForm').submit(function(e) {
-        // Validate Aadhaar
-        const aadhaar = $('[name="aadhaar_number"]').val();
-        if(aadhaar && !/^\d{12}$/.test(aadhaar)) {
-            alert('Aadhaar number must be 12 digits');
-            e.preventDefault();
-            return false;
-        }
-        
-        // Validate PAN
-        const pan = $('[name="pan_number"]').val();
-        if(pan && !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan)) {
-            alert('Invalid PAN format. Format: ABCDE1234F');
-            e.preventDefault();
-            return false;
-        }
-        
-        // Validate Mobile
-        const mobile = $('[name="mobile_number"]').val();
-        if(!/^\d{10}$/.test(mobile)) {
-            alert('Mobile number must be 10 digits');
-            e.preventDefault();
-            return false;
-        }
-        
-        return true;
-    });
-});
-</script>
-
-<?php require_once '../../includes/footer.php'; ?>
+    <?php include '../../includes/footer.php'; ?>
+    <script>
+        // Initialize select2 for dropdowns
+        $(document).ready(function() {
+            $('#department_id, #designation_id, #reporting_manager_id, #work_location').select2();
+        });
+    </script>
+</body>
+</html>
