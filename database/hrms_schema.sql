@@ -24,15 +24,30 @@ CREATE TABLE IF NOT EXISTS `employees` (
   KEY `idx_email` (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Create roles table
+CREATE TABLE IF NOT EXISTS `roles` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `role_name` varchar(50) NOT NULL,
+  `role_slug` varchar(50) NOT NULL UNIQUE,
+  `description` text DEFAULT NULL,
+  `is_active` tinyint(1) DEFAULT 1,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_role_slug` (`role_slug`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Create users table
 CREATE TABLE IF NOT EXISTS `users` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `employee_id` int(11) DEFAULT NULL,
   `username` varchar(100) NOT NULL UNIQUE,
   `email` varchar(255) NOT NULL UNIQUE,
+  `full_name` varchar(255) NOT NULL,
   `password_hash` varchar(255) NOT NULL,
-  `role` enum('Super Admin','Admin','HR','Manager','Employee') NOT NULL DEFAULT 'Employee',
-  `is_active` tinyint(1) DEFAULT 1,
+  `role_id` int(11) NOT NULL DEFAULT 5,
+  `status` enum('Active','Inactive') NOT NULL DEFAULT 'Active',
+  `org_id` int(11) DEFAULT 1,
+  `branch_id` int(11) DEFAULT 1,
   `last_login` datetime DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -40,7 +55,9 @@ CREATE TABLE IF NOT EXISTS `users` (
   KEY `idx_username` (`username`),
   KEY `idx_email` (`email`),
   KEY `fk_employee` (`employee_id`),
-  CONSTRAINT `fk_users_employee` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE SET NULL
+  KEY `fk_role` (`role_id`),
+  CONSTRAINT `fk_users_employee` FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_users_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Create departments table

@@ -1,17 +1,13 @@
 <?php
-require_once '../core/session.php';
-require_once '../core/auth.php';
-require_once '../core/csrf.php';
+// Start session at the very top
+require_once __DIR__ . '/../core/session.php';
+require_once __DIR__ . '/../config/db.php';
 
-// Check if form is submitted
-if($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header('Location: login.php');
-    exit();
-}
+Session::init();
 
-// Validate CSRF token
-if(!isset($_POST['csrf_token']) || !CSRF::validateToken($_POST['csrf_token'])) {
-    header('Location: login.php?error=Invalid security token');
+// Check if form is submitted via POST
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header('Location: login.php?error=Invalid request method');
     exit();
 }
 
@@ -20,42 +16,114 @@ $username = trim($_POST['username'] ?? '');
 $password = $_POST['password'] ?? '';
 
 // Validate input
-if(empty($username) || empty($password)) {
+if (empty($username) || empty($password)) {
     header('Location: login.php?error=Please fill all fields');
     exit();
 }
 
-// Sanitize input
-$username = htmlspecialchars($username);
+// Sanitize username/email input
+$username = htmlspecialchars($username, ENT_QUOTES, 'UTF-8');
 
-// Attempt login
-$auth = new Auth();
-$result = $auth->login($username, $password);
-
-if($result['success']) {
-    $user_role = $result['role'];
+try {
+    // Connect to database
+    $database = new Database();
+    $db = $database->getConnection();
     
-    // Set redirect URL based on role - use correct path without 'auth/'
-    $redirect_pages = [
-        'Super Admin' => '/dashboards/super_admin_dashboard.php',
-        'Admin' => '/dashboards/admin_dashboard.php',
-        'HR' => '/dashboards/hr_dashboard.php',
-        'Manager' => '/dashboards/manager_dashboard.php',
-        'Employee' => '/dashboards/employee_dashboard.php'
-    ];
-    
-    $redirect_url = $redirect_pages[$user_role] ?? '/dashboards/employee_dashboard.php';
-    
-    // Set remember me cookie if checked
-    if(isset($_POST['remember']) && $_POST['remember'] == 'on') {
-        setcookie('remember_token', bin2hex(random_bytes(32)), time() + (86400 * 30), "/");
+    if (!$db) {
+        header('Location: login.php?error=Database connection failed');
+        exit();
     }
     
-    // Redirect to dashboard
+    // Query to fetch user by username OR email and JOIN with roles table
+    $query = "SELECT 
+                u.id,
+                u.username,
+                u.email,
+                u.full_name,
+                u.password_hash,
+                u.employee_id,
+                u.status,
+                u.org_id,
+                u.branch_id,
+                u.role_id,
+                r.role_slug,
+                r.role_name
+              FROM users u
+              INNER JOIN roles r ON u.role_id = r.id
+              WHERE (u.username = :username OR u.email = :username)
+              AND r.status = 'active'
+              LIMIT 1";
+    
+    $stmt = $db->prepare($query);
+    $stmt->bindParam(':username', $username, PDO::PARAM_STR);
+    $stmt->execute();
+    
+    // Check if user exists
+    if ($stmt->rowCount() == 0) {
+        header('Location: login.php?error=Invalid username or email&username=' . urlencode($username));
+        exit();
+    }
+    
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    // Check if account is active
+    if ($user['status'] !== 'Active') {
+        header('Location: login.php?error=Your account is inactive. Please contact administrator&username=' . urlencode($username));
+        exit();
+    }
+    
+    // Verify password
+    if (!password_verify($password, $user['password_hash'])) {
+        header('Location: login.php?error=Invalid password&username=' . urlencode($username));
+        exit();
+    }
+    
+    // Password is correct - Set session variables
+    Session::set('logged_in', true);
+    Session::set('user_id', $user['id']);
+    Session::set('username', $user['username']);
+    Session::set('email', $user['email']);
+    Session::set('full_name', $user['full_name']);
+    Session::set('role', $user['role_slug']); // role_slug for routing (employee, admin, hr, etc)
+    Session::set('role_name', $user['role_name']); // role_name for display (Employee, Admin, HR, etc)
+    Session::set('employee_id', $user['employee_id']);
+    Session::set('org_id', $user['org_id']);
+    Session::set('branch_id', $user['branch_id']);
+    
+    // Update last_login timestamp in database
+    $updateQuery = "UPDATE users SET last_login = NOW() WHERE id = :user_id";
+    $updateStmt = $db->prepare($updateQuery);
+    $updateStmt->bindParam(':user_id', $user['id'], PDO::PARAM_INT);
+    $updateStmt->execute();
+    
+    // Redirect based on role_slug
+    $role_slug = $user['role_slug'];
+    
+    $dashboard_map = [
+        'super_admin' => '/dashboards/super_admin_dashboard.php',
+        'admin' => '/dashboards/admin_dashboard.php',
+        'hr' => '/dashboards/hr_dashboard.php',
+        'manager' => '/dashboards/manager_dashboard.php',
+        'employee' => '/dashboards/employee_dashboard.php'
+    ];
+    
+    // Get redirect URL based on role
+    $redirect_url = $dashboard_map[$role_slug] ?? '/dashboards/employee_dashboard.php';
+    
+    // Special handling for employee role
+    if ($role_slug === 'employee') {
+        header('Location: /dashboards/employee_dashboard.php');
+        exit();
+    }
+    
+    // Redirect to appropriate dashboard
     header("Location: $redirect_url");
     exit();
-} else {
-    header('Location: login.php?error=' . urlencode($result['message']));
+    
+} catch (PDOException $e) {
+    // Log error (in production, log to file instead of displaying)
+    error_log("Login error: " . $e->getMessage());
+    header('Location: login.php?error=An error occurred. Please try again later');
     exit();
 }
 ?>

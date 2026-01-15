@@ -1,7 +1,7 @@
 <?php
 // Include required files
-require_once '../config/db.php';
-require_once '../core/session.php';
+require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../core/session.php';
 
 // Initialize session
 Session::init();
@@ -14,15 +14,33 @@ if (!Session::isLoggedIn()) {
 
 // Check if user has employee role
 if (Session::getUserRole() !== 'employee') {
-    header('Location: ../auth/login.php');
+    // Redirect to appropriate dashboard based on role
+    $role = Session::getUserRole();
+    $dashboard_map = [
+        'super_admin' => 'super_admin_dashboard.php',
+        'admin' => 'admin_dashboard.php',
+        'hr' => 'hr_dashboard.php',
+        'manager' => 'manager_dashboard.php'
+    ];
+    
+    if (isset($dashboard_map[$role])) {
+        header('Location: ' . $dashboard_map[$role]);
+        exit();
+    }
+    
+    // If role not found, logout
+    header('Location: ../auth/logout.php');
     exit();
 }
 
 // Get user details from session
 $user_id = Session::getUserId();
-$full_name = Session::get('full_name') ?? 'Employee';
-$username = Session::get('username') ?? 'employee@ssspl.com';
+$employee_id = Session::getEmployeeId();
+$full_name = Session::get('full_name', 'Employee');
+$username = Session::get('username', 'employee@ssspl.com');
+$email = Session::get('email', '');
 $role = Session::getUserRole();
+$role_name = Session::get('role_name', 'Employee');
 
 // Database connection
 $database = new Database();
@@ -44,12 +62,15 @@ $attendance_percentage = 0;
 
 // Fetch real attendance data for current month
 try {
+    // Use employee_id from session if available, otherwise use user_id
+    $emp_id = $employee_id ?? $user_id;
+    
     $stmt = $db->prepare("SELECT COUNT(*) as present_days FROM attendance 
-                         WHERE employee_id = :user_id 
+                         WHERE employee_id = :emp_id 
                          AND MONTH(attendance_date) = :month 
                          AND YEAR(attendance_date) = :year 
-                         AND status = 'present'");
-    $stmt->bindParam(':user_id', $user_id);
+                         AND status = 'Present'");
+    $stmt->bindParam(':emp_id', $emp_id);
     $stmt->bindParam(':month', $current_month_num);
     $stmt->bindParam(':year', $current_year);
     $stmt->execute();
@@ -61,12 +82,14 @@ try {
     $attendance_percentage = $total_working_days > 0 ? round(($total_present / $total_working_days) * 100, 1) : 0;
 } catch(PDOException $e) {
     // Keep default values if query fails
+    error_log("Attendance query error: " . $e->getMessage());
 }
 
 // Fetch leave balance
 try {
-    $stmt = $db->prepare("SELECT * FROM leave_balance WHERE employee_id = :user_id LIMIT 1");
-    $stmt->bindParam(':user_id', $user_id);
+    $emp_id = $employee_id ?? $user_id;
+    $stmt = $db->prepare("SELECT * FROM leave_balance WHERE employee_id = :emp_id LIMIT 1");
+    $stmt->bindParam(':emp_id', $emp_id);
     $stmt->execute();
     $leave_data = $stmt->fetch(PDO::FETCH_ASSOC);
     if ($leave_data) {
@@ -74,6 +97,7 @@ try {
     }
 } catch(PDOException $e) {
     // Keep default value
+    error_log("Leave balance query error: " . $e->getMessage());
 }
 
 // Count approved leaves this year
@@ -656,9 +680,14 @@ try {
                 <div class="user-avatar"><?php echo strtoupper(substr($full_name, 0, 1)); ?></div>
                 <div class="user-info">
                     <div class="user-name"><?php echo htmlspecialchars($full_name); ?></div>
-                    <div class="user-role"><?php echo htmlspecialchars($role); ?></div>
+                    <div class="user-role"><?php echo htmlspecialchars($role_name); ?></div>
                 </div>
             </div>
+            
+            <a href="../auth/logout.php" style="margin-left: 15px; padding: 8px 20px; background: #dc2626; color: white; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; transition: all 0.3s;" onmouseover="this.style.background='#b91c1c'" onmouseout="this.style.background='#dc2626'">
+                <span>🚪</span>
+                <span>Logout</span>
+            </a>
         </div>
     </div>
     
@@ -666,56 +695,71 @@ try {
     <div class="main-container">
         <!-- Sidebar -->
         <div class="sidebar">
+            <!-- User Profile Section in Sidebar -->
+            <div style="padding: 20px; border-bottom: 1px solid #e5e7eb; background: #f9fafb;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="width: 50px; height: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold;">
+                        <?php echo strtoupper(substr($full_name, 0, 1)); ?>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600; color: #111827; font-size: 14px;"><?php echo htmlspecialchars($full_name); ?></div>
+                        <div style="font-size: 12px; color: #6b7280;"><?php echo htmlspecialchars($role_name); ?></div>
+                    </div>
+                </div>
+            </div>
+            
             <div class="menu-section">
                 <a href="employee_dashboard.php" class="menu-item active">
                     <span class="menu-icon">📊</span>
                     <span>Dashboard</span>
                 </a>
                 
-                <a href="#" class="menu-item">
-                    <span class="menu-icon">👥</span>
-                    <span>Employees</span>
+                <a href="../modules/employees/employee_view.php?id=<?php echo $employee_id; ?>" class="menu-item">
+                    <span class="menu-icon">👤</span>
+                    <span>My Profile</span>
                 </a>
                 
-                <a href="#" class="menu-item">
+                <a href="../modules/attendance/attendance_list.php" class="menu-item">
                     <span class="menu-icon">⏰</span>
                     <span>Attendance</span>
                 </a>
                 
-                <a href="#" class="menu-item">
+                <a href="../modules/leave/leave_my_requests.php" class="menu-item">
                     <span class="menu-icon">📅</span>
                     <span>Leave</span>
                     <span class="menu-badge">3</span>
                 </a>
                 
-                <a href="#" class="menu-item">
+                <a href="../modules/performance/self_appraisal.php" class="menu-item">
                     <span class="menu-icon">🎯</span>
                     <span>Performance</span>
                 </a>
                 
-                <a href="#" class="menu-item">
+                <a href="../modules/training/training_list.php" class="menu-item">
                     <span class="menu-icon">🎓</span>
                     <span>Training</span>
                 </a>
                 
-                <a href="#" class="menu-item">
+                <a href="../modules/payroll/payslip_download.php" class="menu-item">
                     <span class="menu-icon">💼</span>
-                    <span>Assets</span>
+                    <span>Payslips</span>
                 </a>
                 
-                <a href="#" class="menu-item">
+                <a href="../modules/expenses/expense_apply.php" class="menu-item">
                     <span class="menu-icon">✈️</span>
-                    <span>Travel & Expense</span>
+                    <span>Expenses</span>
                 </a>
                 
-                <a href="#" class="menu-item">
+                <a href="../modules/grievance/grievance_register.php" class="menu-item">
                     <span class="menu-icon">💬</span>
                     <span>Grievance</span>
                 </a>
                 
-                <a href="#" class="menu-item">
-                    <span class="menu-icon">⚙️</span>
-                    <span>Settings</span>
+                <div style="margin: 20px 0; height: 1px; background: #e5e7eb;"></div>
+                
+                <a href="../auth/logout.php" class="menu-item" style="color: #dc2626;">
+                    <span class="menu-icon">🚪</span>
+                    <span><strong>Logout</strong></span>
                 </a>
             </div>
             

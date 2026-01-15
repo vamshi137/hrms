@@ -1,10 +1,11 @@
 <?php
-session_start();
-require_once __DIR__ . '/../core/csrf.php';
+// Start session at the very top
+require_once __DIR__ . '/../core/session.php';
+Session::init();
 
-// Check if already logged in
-if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
-    $role = $_SESSION['role'] ?? 'employee';
+// Check if already logged in - redirect to appropriate dashboard
+if (Session::isLoggedIn()) {
+    $role = Session::getUserRole();
     $dashboard_map = [
         'super_admin' => '../dashboards/super_admin_dashboard.php',
         'admin' => '../dashboards/admin_dashboard.php',
@@ -12,15 +13,12 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
         'manager' => '../dashboards/manager_dashboard.php',
         'employee' => '../dashboards/employee_dashboard.php'
     ];
-    $redirect = $dashboard_map[strtolower(str_replace(' ', '_', $role))] ?? '../dashboards/employee_dashboard.php';
+    $redirect = $dashboard_map[$role] ?? '../dashboards/employee_dashboard.php';
     header("Location: $redirect");
     exit();
 }
 
-// Generate CSRF token
-$csrf_token = CSRF::generateToken();
-
-// Check for error messages
+// Get error or success messages from URL
 $error = $_GET['error'] ?? '';
 $success = $_GET['success'] ?? '';
 ?>
@@ -30,8 +28,9 @@ $success = $_GET['success'] ?? '';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - SSMS HRMS</title>
+    <link rel="icon" type="image/png" href="../assets/images/favicon.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* Reset and Base */
         * {
             margin: 0;
             padding: 0;
@@ -39,679 +38,585 @@ $success = $_GET['success'] ?? '';
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background: #f5f5f5;
+            font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            overflow-x: hidden;
-        }
-        
-        /* Main Container */
-        .login-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            min-height: 100vh;
-            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            position: relative;
             overflow: hidden;
         }
         
-        /* Left Panel - Branding */
-        .branding-panel {
-            background: linear-gradient(135deg, #8b2fc9 0%, #6b1b9a 100%);
+        /* Animated background circles */
+        body::before {
+            content: '';
+            position: absolute;
+            width: 500px;
+            height: 500px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            top: -250px;
+            right: -250px;
+            animation: float 6s ease-in-out infinite;
+        }
+        
+        body::after {
+            content: '';
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            bottom: -150px;
+            left: -150px;
+            animation: float 8s ease-in-out infinite reverse;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0px) scale(1); }
+            50% { transform: translateY(20px) scale(1.05); }
+        }
+        
+        .login-container {
+            background: white;
+            border-radius: 24px;
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            max-width: 1100px;
+            width: 100%;
+            display: flex;
+            min-height: 650px;
+            position: relative;
+            z-index: 1;
+            animation: slideUp 0.6s ease-out;
+        }
+        
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .login-left {
+            flex: 1;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 60px 50px;
             color: white;
-            padding: 60px 80px;
             display: flex;
             flex-direction: column;
             justify-content: center;
-            overflow-y: auto;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .login-left::before {
+            content: '';
+            position: absolute;
+            width: 200px;
+            height: 200px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            top: -100px;
+            left: -100px;
+        }
+        
+        .login-left::after {
+            content: '';
+            position: absolute;
+            width: 150px;
+            height: 150px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            bottom: -75px;
+            right: -75px;
         }
         
         .logo-section {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            margin-bottom: 10px;
-        }
-        
-        .logo-icon {
-            width: 48px;
-            height: 48px;
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-        }
-        
-        .logo-text {
-            display: flex;
-            flex-direction: column;
+            position: relative;
+            z-index: 1;
         }
         
         .logo {
-            font-size: 32px;
+            width: 80px;
+            height: 80px;
+            background: white;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+        
+        .logo i {
+            font-size: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .login-left h1 {
+            font-size: 2.8rem;
+            margin-bottom: 15px;
             font-weight: 700;
-            letter-spacing: 1px;
+            line-height: 1.2;
         }
         
-        .tagline {
-            font-size: 14px;
-            opacity: 0.9;
-            font-weight: 300;
-        }
-        
-        .company-name {
-            font-size: 36px;
-            font-weight: 300;
-            margin: 60px 0 20px 0;
-            line-height: 1.3;
-        }
-        
-        .company-description {
-            font-size: 16px;
-            opacity: 0.9;
-            margin-bottom: 40px;
-            line-height: 1.6;
+        .login-left .subtitle {
+            font-size: 1.2rem;
+            opacity: 0.95;
+            margin-bottom: 30px;
             font-weight: 300;
         }
         
         .features {
-            list-style: none;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin: 0;
-            padding: 0;
+            margin-top: 40px;
         }
         
-        .features li {
+        .feature-item {
             display: flex;
             align-items: center;
-            font-size: 15px;
-            font-weight: 300;
+            margin-bottom: 20px;
+            opacity: 0.9;
         }
         
-        .features li:before {
-            content: "●";
-            margin-right: 12px;
+        .feature-icon {
+            width: 45px;
+            height: 45px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
             font-size: 20px;
-            color: #e91e63;
         }
         
-        /* Right Panel - Login Form */
-        .login-panel {
-            background: #fafafa;
-            padding: 60px 80px;
+        .feature-text {
+            font-size: 1rem;
+        }
+        
+        .login-right {
+            flex: 1;
+            padding: 60px 55px;
             display: flex;
             flex-direction: column;
             justify-content: center;
-            align-items: center;
-            overflow-y: auto;
-        }
-        
-        .login-form-wrapper {
-            width: 100%;
-            max-width: 500px;
-        }
-        
-        .login-card {
-            background: white;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
         }
         
         .login-header {
-            margin-bottom: 30px;
+            margin-bottom: 40px;
         }
         
-        .login-title {
-            font-size: 32px;
-            font-weight: 600;
-            color: #1a1a1a;
+        .login-header h2 {
+            font-size: 2rem;
+            color: #1a202c;
             margin-bottom: 8px;
+            font-weight: 700;
         }
         
-        .login-subtitle {
-            color: #666;
-            font-size: 15px;
-            font-weight: 400;
+        .login-header p {
+            color: #718096;
+            font-size: 1rem;
         }
         
-        /* Form Styles */
         .form-group {
             margin-bottom: 24px;
         }
         
         .form-label {
             display: block;
-            margin-bottom: 8px;
+            color: #2d3748;
             font-weight: 600;
-            color: #1a1a1a;
-            font-size: 15px;
+            margin-bottom: 10px;
+            font-size: 0.95rem;
+        }
+        
+        .input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        
+        .input-icon {
+            position: absolute;
+            left: 18px;
+            font-size: 1.1rem;
+            color: #a0aec0;
+            z-index: 1;
+        }
+        
+        .input-field {
+            width: 100%;
+            padding: 16px 18px 16px 52px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            font-family: inherit;
+            background: #f7fafc;
+        }
+        
+        .input-field:focus {
+            outline: none;
+            border-color: #667eea;
+            background: white;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+        }
+        
+        .password-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        
+        .toggle-password {
+            position: absolute;
+            right: 18px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.2rem;
+            padding: 8px;
+            color: #a0aec0;
+            z-index: 10;
+            transition: color 0.3s;
+        }
+        
+        .toggle-password:hover {
+            color: #667eea;
         }
         
         .password-label-wrapper {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
         }
         
         .forgot-password {
-            color: #e91e63;
+            color: #667eea;
             text-decoration: none;
-            font-size: 14px;
-            font-weight: 500;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: color 0.3s;
         }
         
         .forgot-password:hover {
-            text-decoration: underline;
-        }
-        
-        .input-wrapper {
-            position: relative;
-        }
-        
-        .input-icon {
-            position: absolute;
-            left: 16px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #999;
-            font-size: 18px;
-            z-index: 2;
-        }
-        
-        .input-field {
-            width: 100%;
-            padding: 14px 16px 14px 48px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            font-size: 15px;
-            transition: all 0.2s;
-            background: #f8f9fa;
-            color: #333;
-        }
-        
-        .input-field::placeholder {
-            color: #999;
-        }
-        
-        .input-field:focus {
-            outline: none;
-            border-color: #8b2fc9;
-            box-shadow: 0 0 0 3px rgba(139, 47, 201, 0.1);
-            background: white;
-        }
-        
-        .password-wrapper {
-            position: relative;
-        }
-        
-        .toggle-password {
-            position: absolute;
-            right: 16px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: none;
-            border: none;
-            color: #999;
-            cursor: pointer;
-            font-size: 18px;
-            padding: 4px;
+            color: #5568d3;
         }
         
         .login-button {
             width: 100%;
-            padding: 14px;
-            background: #e91e63;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            border-radius: 8px;
-            font-size: 16px;
+            border-radius: 12px;
+            font-size: 1.05rem;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s;
-            margin-top: 8px;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
         }
         
         .login-button:hover {
-            background: #d81b60;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(233, 30, 99, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5);
         }
         
-        /* Demo Accounts Section */
-        .demo-section {
-            margin-top: 40px;
-            padding-top: 32px;
-            border-top: 1px solid #e0e0e0;
+        .login-button:active {
+            transform: translateY(0);
         }
         
-        .demo-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .alert {
+            padding: 14px 18px;
+            border-radius: 12px;
             margin-bottom: 24px;
-        }
-        
-        .demo-title {
-            font-size: 15px;
-            font-weight: 600;
-            color: #1a1a1a;
+            font-size: 0.95rem;
             display: flex;
             align-items: center;
-            gap: 8px;
+            animation: slideDown 0.3s ease-out;
         }
         
-        .demo-badge {
-            background: #8b2fc9;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: capitalize;
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .alert i {
+            margin-right: 10px;
+            font-size: 1.1rem;
+        }
+        
+        .alert-error {
+            background: #fff5f5;
+            color: #c53030;
+            border: 1px solid #feb2b2;
+        }
+        
+        .alert-success {
+            background: #f0fff4;
+            color: #2f855a;
+            border: 1px solid #9ae6b4;
+        }
+        
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 30px 0;
+            color: #a0aec0;
+            font-size: 0.9rem;
+        }
+        
+        .divider::before,
+        .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #e2e8f0;
+        }
+        
+        .divider span {
+            padding: 0 15px;
         }
         
         .demo-accounts {
-            display: grid;
-            gap: 0;
-            background: #f8f9fa;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid #e0e0e0;
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 25px;
         }
         
-        .demo-account {
-            padding: 16px 20px;
-            background: white;
-            cursor: pointer;
-            transition: all 0.2s;
+        .demo-accounts h4 {
+            color: #2d3748;
+            margin-bottom: 15px;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+        }
+        
+        .demo-accounts h4 i {
+            margin-right: 8px;
+            color: #667eea;
+        }
+        
+        .demo-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #f0f0f0;
+            padding: 10px 0;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.9rem;
         }
         
-        .demo-account:last-child {
+        .demo-item:last-child {
             border-bottom: none;
         }
         
-        .demo-account:hover {
-            background: #f8f9fa;
-            padding-left: 24px;
-        }
-        
-        .account-left {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        
-        .account-color {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-        
-        .account-color.red { background: #e74c3c; }
-        .account-color.purple { background: #9b59b6; }
-        .account-color.blue { background: #3498db; }
-        .account-color.green { background: #2ecc71; }
-        .account-color.orange { background: #f39c12; }
-        
-        .account-role {
+        .demo-label {
+            color: #4a5568;
             font-weight: 600;
-            color: #1a1a1a;
-            font-size: 15px;
         }
         
-        .account-email {
-            color: #999;
-            font-size: 14px;
-            font-weight: 400;
+        .demo-value {
+            color: #718096;
+            font-family: 'Courier New', monospace;
         }
         
-        .demo-note {
-            text-align: center;
-            color: #999;
-            font-size: 13px;
-            margin-top: 16px;
-            line-height: 1.5;
-        }
-        
-        .contact-section {
-            text-align: center;
-            margin-top: 32px;
-            padding-top: 24px;
-            border-top: 1px solid #e0e0e0;
-            font-size: 14px;
-            color: #666;
-        }
-        
-        .contact-link {
-            color: #e91e63;
-            text-decoration: none;
-            font-weight: 500;
-        }
-        
-        .contact-link:hover {
-            text-decoration: underline;
-        }
-        
-        /* Error Message */
-        .error-message {
-            background: #ffebee;
-            color: #c62828;
-            padding: 12px 16px;
-            border-radius: 8px;
-            margin-bottom: 24px;
-            font-size: 14px;
-            border-left: 3px solid #c62828;
-        }
-        
-        /* Responsive Design */
-        @media (max-width: 1200px) {
-            .branding-panel, .login-panel {
-                padding: 50px 60px;
-            }
-            
-            .login-form-wrapper {
-                padding: 40px 35px;
-            }
-            
-            .login-card {
-                padding: 35px 30px;
-            }
-            
-            .login-header {
-                margin-bottom: 25px;
-            }
-        }
-        
-        @media (max-width: 1024px) {
+        @media (max-width: 968px) {
             .login-container {
-                grid-template-columns: 1fr;
-                height: auto;
+                flex-direction: column;
             }
             
-            .branding-panel {
-                padding: 40px 30px;
-                min-height: auto;
-            }
-            
-            .company-name {
-                font-size: 28px;
-                margin: 40px 0 15px 0;
-            }
-            
-            .features {
-                grid-template-columns: 1fr;
-            }
-            
-            .login-panel {
+            .login-left {
                 padding: 40px 30px;
             }
             
-            .login-form-wrapper {
-                max-width: 100%;
+            .login-right {
+                padding: 40px 30px;
             }
             
-            .login-card {
-                padding: 30px 25px;
-            }
-            
-            .login-header {
-                margin-bottom: 25px;
-            }
-        }
-        
-        @media (max-width: 768px) {
-            .branding-panel, .login-panel {
-                padding: 30px 20px;
-            }
-            
-            .login-form-wrapper {
-                padding: 30px 25px;
-            }
-            
-            .login-card {
-                padding: 25px 20px;
-            }
-            
-            .login-header {
-                margin-bottom: 20px;
-            }
-            
-            .login-title {
-                font-size: 28px;
-            }
-            
-            .company-name {
-                font-size: 24px;
-            }
-        }
-        
-        @media (max-width: 480px) {
-            .logo {
-                font-size: 24px;
-            }
-            
-            .login-title {
-                font-size: 24px;
+            .login-left h1 {
+                font-size: 2.2rem;
             }
             
             .features {
                 display: none;
             }
-            
-            .login-form-wrapper {
-                padding: 25px 20px;
+        }
+        
+        @media (max-width: 480px) {
+            .login-header h2 {
+                font-size: 1.6rem;
             }
             
-            .login-card {
-                padding: 20px 15px;
-            }
-            
-            .login-header {
-                margin-bottom: 20px;
-            }
-            
-            .login-title {
-                font-size: 24px;
+            .demo-accounts {
+                font-size: 0.85rem;
             }
         }
     </style>
 </head>
 <body>
     <div class="login-container">
-        <!-- Left Panel: Branding & Info -->
-        <div class="branding-panel">
+        <!-- Left Side - Branding -->
+        <div class="login-left">
             <div class="logo-section">
-                <div class="logo-icon">📋</div>
-                <div class="logo-text">
-                    <div class="logo">SSSMS</div>
-                    <div class="tagline">Sales & Services Management</div>
+                <div class="logo">
+                    <i class="fas fa-briefcase"></i>
                 </div>
+                <h1>SSMS HRMS</h1>
+                <p class="subtitle">Human Resource Management System</p>
             </div>
             
-            <h1 class="company-name">Srinivasa Sales and Service Private Limited</h1>
-            <p class="company-description">
-                Complete HR management solution for employee data, payroll, attendance, leave management, and more.
-            </p>
-            
-            <ul class="features">
-                <li>Employee Management</li>
-                <li>Payroll Processing</li>
-                <li>Leave Tracking</li>
-                <li>Performance Reviews</li>
-            </ul>
+            <div class="features">
+                <div class="feature-item">
+                    <div class="feature-icon">
+                        <i class="fas fa-shield-alt"></i>
+                    </div>
+                    <div class="feature-text">Secure & Encrypted Login</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">
+                        <i class="fas fa-clock"></i>
+                    </div>
+                    <div class="feature-text">Real-time Attendance Tracking</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <div class="feature-text">Advanced Analytics & Reports</div>
+                </div>
+            </div>
         </div>
         
-        <!-- Right Panel: Login Form -->
-        <div class="login-panel">
-            <div class="login-form-wrapper">
-                <div class="login-card">
-                    <div class="login-header">
-                        <h2 class="login-title">Welcome back</h2>
-                        <p class="login-subtitle">Enter your credentials to access your account</p>
+        <!-- Right Side - Login Form -->
+        <div class="login-right">
+            <div class="login-header">
+                <h2>Welcome Back!</h2>
+                <p>Please enter your credentials to continue</p>
+            </div>
+            
+            <?php if ($error): ?>
+                <div class="alert alert-error">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span><?php echo htmlspecialchars($error); ?></span>
+                </div>
+            <?php endif; ?>
+            
+            <?php if ($success): ?>
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i>
+                    <span><?php echo htmlspecialchars($success); ?></span>
+                </div>
+            <?php endif; ?>
+            
+            <form method="POST" action="login_action.php">
+                <div class="form-group">
+                    <label class="form-label">Email or Username</label>
+                    <div class="input-wrapper">
+                        <i class="fas fa-user input-icon"></i>
+                        <input type="text" 
+                               name="username" 
+                               class="input-field" 
+                               placeholder="Enter your email or username" 
+                               required 
+                               autocomplete="username"
+                               value="<?php echo isset($_GET['username']) ? htmlspecialchars($_GET['username']) : ''; ?>">
                     </div>
+                </div>
                 
-                <?php if (isset($error)): ?>
-                    <div class="error-message">
-                        <?php echo htmlspecialchars($error); ?>
+                <div class="form-group">
+                    <div class="password-label-wrapper">
+                        <label class="form-label">Password</label>
+                        <a href="forgot_password.php" class="forgot-password">Forgot password?</a>
                     </div>
-                <?php endif; ?>
-                
-                <form method="POST" action="login_action.php">
-                    <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                    
-                    <div class="form-group">
-                        <label class="form-label">Email or Username</label>
+                    <div class="password-wrapper">
                         <div class="input-wrapper">
-                            <span class="input-icon">✉</span>
-                            <input type="text" name="username" class="input-field" 
-                                   placeholder="name@company.com or username" required autocomplete="username">
+                            <i class="fas fa-lock input-icon"></i>
+                            <input type="password" 
+                                   name="password" 
+                                   id="password" 
+                                   class="input-field" 
+                                   placeholder="Enter your password" 
+                                   required 
+                                   autocomplete="current-password">
                         </div>
+                        <button type="button" class="toggle-password" onclick="togglePassword()" title="Show/Hide Password">
+                            <i class="fas fa-eye" id="toggleIcon"></i>
+                        </button>
                     </div>
-                    
-                    <div class="form-group">
-                        <div class="password-label-wrapper">
-                            <label class="form-label">Password</label>
-                            <a href="forgot_password.php" class="forgot-password">Forgot password?</a>
-                        </div>
-                        <div class="password-wrapper">
-                            <div class="input-wrapper">
-                                <span class="input-icon">🔒</span>
-                                <input type="password" name="password" id="password" class="input-field" 
-                                       placeholder="Enter your password" required autocomplete="current-password">
-                            </div>
-                            <button type="button" class="toggle-password" onclick="togglePassword()">👁</button>
-                        </div>
-                    </div>
-                    
-                    <button type="submit" class="login-button">Sign in</button>
-                </form>
-                
-                <div class="demo-section">
-                    <div class="demo-header">
-                        <div class="demo-title">
-                            <span>👥</span>
-                            Demo Accounts
-                        </div>
-                        <span class="demo-badge">Dev Mode</span>
-                    </div>
-                    
-                    <div class="demo-accounts">
-                        <div class="demo-account" onclick="fillCredentials('admin@ssspl.com', 'demo@123')">
-                            <div class="account-left">
-                                <div class="account-color red"></div>
-                                <div class="account-role">Admin</div>
-                            </div>
-                            <div class="account-email">admin@ssspl.com</div>
-                        </div>
-                        
-                        <div class="demo-account" onclick="fillCredentials('hr@ssspl.com', 'demo@123')">
-                            <div class="account-left">
-                                <div class="account-color purple"></div>
-                                <div class="account-role">HR</div>
-                            </div>
-                            <div class="account-email">hr@ssspl.com</div>
-                        </div>
-                        
-                        <div class="demo-account" onclick="fillCredentials('manager@ssspl.com', 'demo@123')">
-                            <div class="account-left">
-                                <div class="account-color blue"></div>
-                                <div class="account-role">Manager</div>
-                            </div>
-                            <div class="account-email">manager@ssspl.com</div>
-                        </div>
-                        
-                        <div class="demo-account" onclick="fillCredentials('employee@ssspl.com', 'demo@123')">
-                            <div class="account-left">
-                                <div class="account-color green"></div>
-                                <div class="account-role">Employee</div>
-                            </div>
-                            <div class="account-email">employee@ssspl.com</div>
-                        </div>
-                        
-                        <div class="demo-account" onclick="fillCredentials('accounts@ssspl.com', 'demo@123')">
-                            <div class="account-left">
-                                <div class="account-color orange"></div>
-                                <div class="account-role">Accounts</div>
-                            </div>
-                            <div class="account-email">accounts@ssspl.com</div>
-                        </div>
-                    </div>
-                    
-                    <p class="demo-note">
-                        Click any account to auto-fill credentials
-                    </p>
                 </div>
                 
-                <div class="contact-section">
-                    Don't have an account? <a href="#" class="contact-link">Contact HR</a>
+                <button type="submit" class="login-button">
+                    <i class="fas fa-sign-in-alt"></i> Sign In
+                </button>
+            </form>
+            
+            <div class="divider">
+                <span>Demo Accounts</span>
+            </div>
+            
+            <div class="demo-accounts">
+                <h4><i class="fas fa-info-circle"></i> Test Credentials</h4>
+                <div class="demo-item">
+                    <span class="demo-label">Employee:</span>
+                    <span class="demo-value">employee@ssspl.com</span>
                 </div>
+                <div class="demo-item">
+                    <span class="demo-label">Manager:</span>
+                    <span class="demo-value">manager@ssspl.com</span>
+                </div>
+                <div class="demo-item">
+                    <span class="demo-label">Password:</span>
+                    <span class="demo-value">demo@123</span>
                 </div>
             </div>
         </div>
     </div>
     
     <script>
-        // Toggle password visibility
         function togglePassword() {
-            const passwordInput = document.getElementById('password');
-            const toggleBtn = document.querySelector('.toggle-password');
+            const passwordField = document.getElementById('password');
+            const toggleIcon = document.getElementById('toggleIcon');
             
-            if (passwordInput.type === 'password') {
-                passwordInput.type = 'text';
-                toggleBtn.textContent = '👁️';
+            if (passwordField.type === 'password') {
+                passwordField.type = 'text';
+                toggleIcon.classList.remove('fa-eye');
+                toggleIcon.classList.add('fa-eye-slash');
             } else {
-                passwordInput.type = 'password';
-                toggleBtn.textContent = '👁';
+                passwordField.type = 'password';
+                toggleIcon.classList.remove('fa-eye-slash');
+                toggleIcon.classList.add('fa-eye');
             }
         }
         
-        // Fill demo credentials
-        function fillCredentials(email, password) {
-            document.querySelector('input[name="username"]').value = email;
-            document.querySelector('input[name="password"]').value = password;
-            document.querySelector('form').submit();
-        }
-        
-        // Add smooth animations
-        document.addEventListener('DOMContentLoaded', function() {
-            // Animate form elements
-            const formGroups = document.querySelectorAll('.form-group');
-            formGroups.forEach((group, index) => {
-                group.style.opacity = '0';
-                group.style.transform = 'translateY(10px)';
-                
-                setTimeout(() => {
-                    group.style.transition = 'all 0.4s ease';
-                    group.style.opacity = '1';
-                    group.style.transform = 'translateY(0)';
-                }, index * 100);
+        // Auto-hide alerts after 7 seconds
+        setTimeout(function() {
+            const alerts = document.querySelectorAll('.alert');
+            alerts.forEach(alert => {
+                alert.style.transition = 'opacity 0.5s, transform 0.5s';
+                alert.style.opacity = '0';
+                alert.style.transform = 'translateY(-10px)';
+                setTimeout(() => alert.remove(), 500);
             });
-            
-            // Animate demo accounts
-            const demoAccounts = document.querySelectorAll('.demo-account');
-            demoAccounts.forEach((account, index) => {
-                account.style.opacity = '0';
-                account.style.transform = 'translateX(-10px)';
-                
-                setTimeout(() => {
-                    account.style.transition = 'all 0.3s ease';
-                    account.style.opacity = '1';
-                    account.style.transform = 'translateX(0)';
-                }, 400 + (index * 60));
-            });
-        });
+        }, 7000);
     </script>
 </body>
 </html>
